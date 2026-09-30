@@ -6,6 +6,7 @@ import rr.Color
 import rr.Draw
 import rr.Text
 import rr.Font
+import Binary
 
 ## State kept between updates: prepared text and layout that can be reused,
 ## plus the latest pointer position, button state, and elapsed time needed to
@@ -101,4 +102,87 @@ render! = |model, frame| {
 	frame.circle!({ center: model.pointer, radius: 18, style: Draw.filled_and_outlined(accent, Color.white, 3) })
 
 	Ok({})
+}
+
+World := {
+	# Stores the archetype, and the index in that archetypes list
+	entities : List((ArchetypeId, U32)),
+	archetypes : List(Archetype),
+}.{
+	is_eq : _
+
+	default : () -> World
+	default = || {
+		entities: [],
+		archetypes: [],
+	}
+
+	spawn_empty : World -> (Entity, World)
+	spawn_empty = |world| {
+		entity = world.next_entity()
+		match world.archetypes.find_first_index(|a| a.matches_exact([])) {
+			Ok(id) => crash "todo"
+			Err(NotFound) => {
+				next_arch_id = ArchetypeId.from_u64(world.archetypes.len())
+				(
+					entity,
+					World.{
+						entities: world.entities.append((next_arch_id, 0)),
+						archetypes: world.archetypes.append(Archetype.([])),
+					},
+				)
+			}
+		}
+	}
+
+	next_entity : World -> Entity
+	next_entity = |world| {
+		Entity.from_u64(List.len(world.entities))
+	}
+}
+
+ArchetypeId := U32.{
+
+	from_u64 : U64 -> ArchetypeId
+	from_u64 = |i| ArchetypeId.(i.to_u32_wrap())
+}
+
+Archetype := List(ComponentStore).{
+	matches_exact = |arch, components| {
+		arch.data.map(|s| s.name) == components
+	}
+}
+
+ComponentStore := {
+	name : Str,
+	size : U16,
+	bytes : List(U8),
+}
+
+Component(a) : {
+	name : Str,
+	size : U16,
+	to_bytes : (a) -> List(U8),
+	from_bytes : List(U8) -> Try(a, [DecodeError]),
+}
+
+Position := { x : F32, y : F32 }.{
+	encoder_for : _
+	parser_for : _
+}
+
+Entity := U32.{
+	parser_for : _
+	encoder_for : _
+	is_eq : _
+
+	from_u64 : U64 -> Entity
+	from_u64 = |i| Entity.(i.to_u32_wrap())
+}
+
+expect World.default() == { entities: [], archetypes: [] }
+expect {
+	(entity, world) = World.default().spawn_empty()
+
+	world == { entities: [(ArchetypeId.(0), 0)], archetypes: [Archetype.([])] } and entity == Entity.(0)
 }
