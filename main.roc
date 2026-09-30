@@ -121,24 +121,49 @@ World := {
 	spawn_empty = |world| {
 		entity = world.next_entity()
 		match world.archetypes.find_first_index(|a| a.matches_exact(["Entity"])) {
-			Ok(_id) => crash "todo"
+			Ok(id) => {
+				archetypes = match world
+					.archetypes
+					.update(
+						id,
+						|arch| arch.append(entity, []),
+					) {
+					Ok(a) => a
+					Err(_) => crash "Unable to update at index ${id.to_str()}, after being given that index"
+				}
+				Archetype.(arch) = match world
+					.archetypes
+					.get(id) {
+					Ok(a) => a
+					Err(_) => crash "Unable to update at index ${id.to_str()}, after being given that index"
+				}
+				(
+					entity,
+					World.{
+						entities: world.entities.append((
+							ArchetypeId.from_u64(id),
+							arch.entities.bytes.len().to_u32_wrap() / arch.entities.size.to_u32(),
+						)),
+						archetypes: archetypes,
+					},
+				)
+			}
 			Err(NotFound) => {
 				next_arch_id = ArchetypeId.from_u64(world.archetypes.len())
-				archetype = Archetype.(
-					[
-						{
-							name: "Entity",
-							size: 4,
-							bytes: [],
-						},
-					],
-				)
+				archetype = Archetype.{
+					entities: ComponentStore.{
+						name: "Entity",
+						size: 4,
+						bytes: [],
+					},
+					other: [],
+				}
 				(
 					entity,
 					World.{
 						entities: world.entities.append((next_arch_id, 0)),
 						archetypes: world.archetypes.append(
-							archetype.append([Binary.encode(entity)]),
+							archetype.append(entity, []),
 						),
 					},
 				)
@@ -157,17 +182,27 @@ ArchetypeId := U32.{
 	from_u64 = |i| ArchetypeId.(i.to_u32_wrap())
 }
 
-Archetype := List(ComponentStore).{
+Archetype := {
+	entities : ComponentStore,
+	other : List(ComponentStore),
+}.{
+	all = |Archetype.(arch)| [arch.entities].concat(arch.other)
+
 	matches_exact : Archetype, List(Str) -> Bool
 	matches_exact = |Archetype.(arch), components| {
-		arch.map(|s| s.name) == components
+		Archetype.(arch).all().map(|s| s.name) == components
 	}
 
-	append : Archetype, List(List(U8)) -> Archetype
-	append = |Archetype.(arch), bytes| {
-		expect bytes.len() == arch.len()
-		Archetype.(
-			arch.map2(
+	append : Archetype, Entity, List(List(U8)) -> Archetype
+	append = |Archetype.(arch), entity, bytes| {
+		expect bytes.len() == arch.other.len()
+		Archetype.{
+			entities: {
+				name: arch.entities.name,
+				size: arch.entities.size,
+				bytes: arch.entities.bytes.concat(Binary.encode(entity)),
+			},
+			other: arch.other.map2(
 				bytes,
 				|a, c| {
 					expect a.size.to_u64() == c.len()
@@ -178,7 +213,7 @@ Archetype := List(ComponentStore).{
 					}
 				},
 			),
-		)
+		}
 	}
 }
 
@@ -216,15 +251,31 @@ expect {
 	world == {
 		entities: [(ArchetypeId.(0), 0)],
 		archetypes: [
-			Archetype.(
-				[
-					{
-						name: "Entity",
-						size: 4,
-						bytes: [0, 0, 0, 0],
-					},
-				],
-			),
+			Archetype.{
+				entities: {
+					name: "Entity",
+					size: 4,
+					bytes: [0, 0, 0, 0],
+				},
+				other: [],
+			},
 		],
 	} and entity == Entity.(0)
+}
+expect {
+	(_, world) = World.default().spawn_empty()
+	(entity2, world2) = world.spawn_empty()
+	entity2 == Entity.(1) and world2 == {
+		entities: [(ArchetypeId.(0), 0), (ArchetypeId.(0), 1)],
+		archetypes: [
+			Archetype.{
+				entities: {
+					name: "Entity",
+					size: 4,
+					bytes: [0, 0, 0, 0, 1, 0, 0, 0],
+				},
+				other: [],
+			},
+		],
+	}
 }
