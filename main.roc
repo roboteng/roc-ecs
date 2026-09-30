@@ -120,16 +120,26 @@ World := {
 	spawn_empty : World -> (Entity, World)
 	spawn_empty = |world| {
 		entity = world.next_entity()
-		match world.archetypes.find_first_index(|a| a.matches_exact([])) {
+		match world.archetypes.find_first_index(|a| a.matches_exact(["Entity"])) {
 			Ok(_id) => crash "todo"
 			Err(NotFound) => {
 				next_arch_id = ArchetypeId.from_u64(world.archetypes.len())
-				archetype = Archetype.([])
+				archetype = Archetype.(
+					[
+						{
+							name: "Entity",
+							size: 4,
+							bytes: [],
+						},
+					],
+				)
 				(
 					entity,
 					World.{
 						entities: world.entities.append((next_arch_id, 0)),
-						archetypes: world.archetypes.append(archetype),
+						archetypes: world.archetypes.append(
+							archetype.append([Binary.encode(entity)]),
+						),
 					},
 				)
 			}
@@ -203,5 +213,18 @@ expect World.default() == { entities: [], archetypes: [] }
 expect {
 	(entity, world) = World.default().spawn_empty()
 
-	world == { entities: [(ArchetypeId.(0), 0)], archetypes: [Archetype.([])] } and entity == Entity.(0)
+	world == {
+		entities: [(ArchetypeId.(0), 0)],
+		archetypes: [
+			Archetype.(
+				[
+					{
+						name: "Entity",
+						size: 4,
+						bytes: [0, 0, 0, 0],
+					},
+				],
+			),
+		],
+	} and entity == Entity.(0)
 }
