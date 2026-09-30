@@ -121,14 +121,15 @@ World := {
 	spawn_empty = |world| {
 		entity = world.next_entity()
 		match world.archetypes.find_first_index(|a| a.matches_exact([])) {
-			Ok(id) => crash "todo"
+			Ok(_id) => crash "todo"
 			Err(NotFound) => {
 				next_arch_id = ArchetypeId.from_u64(world.archetypes.len())
+				archetype = Archetype.([])
 				(
 					entity,
 					World.{
 						entities: world.entities.append((next_arch_id, 0)),
-						archetypes: world.archetypes.append(Archetype.([])),
+						archetypes: world.archetypes.append(archetype),
 					},
 				)
 			}
@@ -142,14 +143,32 @@ World := {
 }
 
 ArchetypeId := U32.{
-
 	from_u64 : U64 -> ArchetypeId
 	from_u64 = |i| ArchetypeId.(i.to_u32_wrap())
 }
 
 Archetype := List(ComponentStore).{
-	matches_exact = |arch, components| {
-		arch.data.map(|s| s.name) == components
+	matches_exact : Archetype, List(Str) -> Bool
+	matches_exact = |Archetype.(arch), components| {
+		arch.map(|s| s.name) == components
+	}
+
+	append : Archetype, List(List(U8)) -> Archetype
+	append = |Archetype.(arch), bytes| {
+		expect bytes.len() == arch.len()
+		Archetype.(
+			arch.map2(
+				bytes,
+				|a, c| {
+					expect a.size.to_u64() == c.len()
+					{
+						name: a.name,
+						size: a.size,
+						bytes: a.bytes.concat(c),
+					}
+				},
+			),
+		)
 	}
 }
 
