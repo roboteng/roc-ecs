@@ -6,7 +6,7 @@ import rr.Color
 import rr.Draw
 import rr.Text
 import rr.Font
-import Binary
+import rr.Math
 
 ## State kept between updates: prepared text and layout that can be reused,
 ## plus the latest pointer position, button state, and elapsed time needed to
@@ -21,6 +21,7 @@ Model : {
 	## Seconds since launch, folded in from `input.time`. `render!` gets no
 	## input, so anything that moves has to be read off the model like this.
 	elapsed : F32,
+	world : MyWorld,
 }
 
 Layout : {
@@ -46,6 +47,7 @@ init! = App.init(
 			pointer: { x: 400, y: 300 },
 			accent_on: Bool.False,
 			elapsed: 0,
+			world: new_world(),
 		})
 	},
 )
@@ -104,178 +106,142 @@ render! = |model, frame| {
 	Ok({})
 }
 
-World := {
-	# Stores the archetype, and the index in that archetypes list
-	entities : List((ArchetypeId, U32)),
-	archetypes : List(Archetype),
+World(s) := {
+	entities : Store({}),
+	unused : List(Entity),
+	inputs : List((World(s), App.Input(Msg) => Try(World(s), []))),
+	updates : List(World(s) -> World(s)),
+	renders : List((World(s), Draw.Frame => Try({}, [Exit(I64)]))),
+	components : s,
 }.{
-	is_eq : _
+	empty : s -> World(s)
+	empty = |components| World.(
+		{
+			entities: Store.empty(),
+			components: components,
+			unused: [],
+			inputs: [],
+			updates: [],
+			renders: [],
+		},
+	)
 
-	default : () -> World
-	default = || {
-		entities: [],
-		archetypes: [],
+	input! : World, App.Input(Msg) => Try(World, [])
+	input! = |w, io| {
+		var $world = w
+		for input in w.inputs {
+			$world = input($world, io)?
+		}
+		Ok($world)
 	}
 
-	spawn_empty : World -> (Entity, World)
+	update : World -> World
+	update = |w| w.updates.fold(w, |world, system| system(world))
+
+	render! : World, Draw.Frame => Try({}, [Exit(I64)])
+	render! = |w, frame| {
+		for r in w.renders {
+			r(w, frame)?
+		}
+		Ok({})
+	}
+
+	spawn_empty : World -> (World, Entity)
 	spawn_empty = |world| {
-		entity = world.next_entity()
-		match world.archetypes.find_first_index(|a| a.matches_exact(["Entity"])) {
-			Ok(id) => {
-				archetypes = match world
-					.archetypes
-					.update(
-						id,
-						|arch| arch.append(entity, []),
-					) {
-					Ok(a) => a
-					Err(_) => crash "Unable to update at index ${id.to_str()}, after being given that index"
-				}
-				Archetype.(arch) = match world
-					.archetypes
-					.get(id) {
-					Ok(a) => a
-					Err(_) => crash "Unable to update at index ${id.to_str()}, after being given that index"
-				}
+		len = world.unused.len()
+		match world.unused.last() {
+			Err(ListWasEmpty) => {
+				Store.(entities) = world.entities
+				ent = entities.len()
+				entity = Entity.(EntityId.(ent.to_u32_wrap()), GenerationId.(0))
+				World.(w) = world
 				(
+					World.(
+						{
+							..w,
+							entities: world.entities.insert(entity, {}),
+						},
+					),
 					entity,
-					World.{
-						entities: world.entities.append((
-							ArchetypeId.from_u64(id),
-							arch.entities.bytes.len().to_u32_wrap() / arch.entities.size.to_u32(),
-						)),
-						archetypes: archetypes,
-					},
 				)
 			}
-			Err(NotFound) => {
-				next_arch_id = ArchetypeId.from_u64(world.archetypes.len())
-				archetype = Archetype.{
-					entities: ComponentStore.{
-						name: "Entity",
-						size: 4,
-						bytes: [],
-					},
-					other: [],
-				}
+			Ok(ent) => {
+				unused = world.unused.take_first(len - 1)
+				n_ent = ent.inc_gen()
+				World.(w) = world
 				(
-					entity,
-					World.{
-						entities: world.entities.append((next_arch_id, 0)),
-						archetypes: world.archetypes.append(
-							archetype.append(entity, []),
-						),
-					},
+					World.(
+						{
+							..w,
+							unused: unused,
+
+						},
+					),
+					n_ent,
 				)
 			}
 		}
 	}
-
-	next_entity : World -> Entity
-	next_entity = |world| {
-		Entity.from_u64(List.len(world.entities))
-	}
 }
 
-ArchetypeId := U32.{
-	from_u64 : U64 -> ArchetypeId
-	from_u64 = |i| ArchetypeId.(i.to_u32_wrap())
+Storage := {
+	time : Store(F32),
+	text : Store(Text.Prepared),
+	pointer : Store({}),
+	position : Store(Math.Vec2),
+	size : Store(Math.Vec2),
+	radius : Store(F32),
+	fill_color : Store(Color),
 }
 
-Archetype := {
-	entities : ComponentStore,
-	other : List(ComponentStore),
-}.{
-	all = |Archetype.(arch)| [arch.entities].concat(arch.other)
+MyWorld : World(Storage)
 
-	matches_exact : Archetype, List(Str) -> Bool
-	matches_exact = |Archetype.(arch), components| {
-		Archetype.(arch).all().map(|s| s.name) == components
-	}
+new_world = || World.empty(
+	Storage.(
+		{
+			time: Store.empty(),
+			text: Store.empty(),
+			pointer: Store.empty(),
+			position: Store.empty(),
+			size: Store.empty(),
+			radius: Store.empty(),
+			fill_color: Store.empty(),
+		},
+	),
+)
 
-	append : Archetype, Entity, List(List(U8)) -> Archetype
-	append = |Archetype.(arch), entity, bytes| {
-		expect bytes.len() == arch.other.len()
-		Archetype.{
-			entities: {
-				name: arch.entities.name,
-				size: arch.entities.size,
-				bytes: arch.entities.bytes.concat(Binary.encode(entity)),
-			},
-			other: arch.other.map2(
-				bytes,
-				|a, c| {
-					expect a.size.to_u64() == c.len()
-					{
-						name: a.name,
-						size: a.size,
-						bytes: a.bytes.concat(c),
-					}
-				},
-			),
+Store(a) := Dict(EntityId, (GenerationId, a)).{
+	empty = || Store.(Dict.empty())
+
+	insert : Store, Entity, a -> Store
+	insert = |Store.(store), Entity.(ent, gen), comp| Store.(store.insert(ent, (gen, comp)))
+
+	get : Store, Entity -> Try(a, _)
+	get = |Store.(store), Entity.(ent, gen)| {
+		(stored_gen, stored_comp) = store.get(ent) ? |_| EntityNotFound
+		if gen == stored_gen {
+			Ok(stored_comp)
+		} else {
+			Err(EntityExpired)
 		}
 	}
 }
 
-ComponentStore := {
-	name : Str,
-	size : U16,
-	bytes : List(U8),
-}
-
-Component(a) : {
-	name : Str,
-	size : U16,
-	to_bytes : (a) -> List(U8),
-	from_bytes : List(U8) -> Try(a, [DecodeError]),
-}
-
-Position := { x : F32, y : F32 }.{
-	encoder_for : _
-	parser_for : _
-}
-
-Entity := U32.{
-	parser_for : _
-	encoder_for : _
+EntityId := U32.{
 	is_eq : _
-
-	from_u64 : U64 -> Entity
-	from_u64 = |i| Entity.(i.to_u32_wrap())
+	to_hash : _
 }
 
-expect World.default() == { entities: [], archetypes: [] }
-expect {
-	(entity, world) = World.default().spawn_empty()
+GenerationId := U32.{
+	is_eq : _
+}
 
-	world == {
-		entities: [(ArchetypeId.(0), 0)],
-		archetypes: [
-			Archetype.{
-				entities: {
-					name: "Entity",
-					size: 4,
-					bytes: [0, 0, 0, 0],
-				},
-				other: [],
-			},
-		],
-	} and entity == Entity.(0)
+Entity := (EntityId, GenerationId).{
+	inc_gen = |Entity.(ent, GenerationId.(gen))| Entity.(ent, GenerationId.(gen + 1))
 }
-expect {
-	(_, world) = World.default().spawn_empty()
-	(entity2, world2) = world.spawn_empty()
-	entity2 == Entity.(1) and world2 == {
-		entities: [(ArchetypeId.(0), 0), (ArchetypeId.(0), 1)],
-		archetypes: [
-			Archetype.{
-				entities: {
-					name: "Entity",
-					size: 4,
-					bytes: [0, 0, 0, 0, 1, 0, 0, 0],
-				},
-				other: [],
-			},
-		],
-	}
+
+Center := Math.Vec2.{
+	comp = || Center
 }
+
+Components := [Center, Unused]
