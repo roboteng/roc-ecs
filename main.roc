@@ -52,12 +52,14 @@ init! = App.init(
 					time: Store.empty(),
 					pos: Store.empty(),
 					pointer: Store.empty(),
+					radius: Store.empty(),
 				})
 					.add_input(write_time)
 					.add_input(write_pointer)
+					.add_system(pulse_circle)
 					.add_render(render_circle!)
 					.spawn(Time.({ dt: 0, total: 0 })).0
-					.spawn2(Pos.({ x: 0, y: 0 }), Pointer.({})).0
+					.spawn3(Pos.({ x: 0, y: 0 }), Pointer.({}), Radius.(45)).0
 			},
 		})
 	},
@@ -79,7 +81,7 @@ update! = |model, program_input, _io| {
 			pointer: input.mouse.position(),
 			accent_on: input.mouse.button_down(Left),
 			elapsed: model.elapsed + program_input.time.elapsed_seconds,
-			world: model.world.input!(program_input)?,
+			world: model.world.input!(program_input)?.update(),
 		})
 	}
 }
@@ -141,10 +143,26 @@ write_pointer = |w, input| {
 	)
 }
 
-render_circle! : RenderSystem({ pos : Store(Pos), .. })
+pulse_circle : UpdateSystem(
+	{
+		radius : Store(Radius),
+		pos : Store(Pos),
+		time : Store(Time),
+		..r,
+	},
+)
+pulse_circle = |world| {
+	time : Time
+	time = world.components.time.iter().fold(Time.({ dt: 0, total: 0 }), |_acc, (_ent, t)| t)
+	world.map_comp2(
+		|Radius.(_), Pos.(pos)| (Radius.(32 + 8 * (0.5 + 0.5 * F32.sin(time.total * 1.6))), Pos.(pos)),
+	)
+}
+
+render_circle! : RenderSystem({ pos : Store(Pos), radius : Store(Radius), .. })
 render_circle! = |world, frame| {
-	for (_ent, pos) in world.components.pos {
-		frame.circle!({ center: { x: pos.x, y: pos.y }, radius: 45, style: Draw.filled(Color.with_alpha(Color.from_hex_rgb(0x00ff00), 40)) })
+	for (_ent, Pos.(pos), Radius.(r)) in world.query2() {
+		frame.circle!({ center: { x: pos.x, y: pos.y }, radius: r, style: Draw.filled(Color.with_alpha(Color.from_hex_rgb(0x00ff00), 40)) })
 	}
 	Ok({})
 }
@@ -264,6 +282,27 @@ World(s) := {
 		(World.with_store(World.with_store(world1, store1), store2), entity)
 	}
 
+	spawn3 : World(s), c1, c2, c3 -> (World(s), Entity)
+		where [
+			c1.from_world : s -> Store(c1),
+			c1.to_world : s, Store(c1) -> s,
+			c2.from_world : s -> Store(c2),
+			c2.to_world : s, Store(c2) -> s,
+			c3.from_world : s -> Store(c3),
+			c3.to_world : s, Store(c3) -> s,
+		]
+	spawn3 = |world, component1, component2, component3| {
+		(world1, entity) = world.spawn_empty()
+		C1 : c1
+		C2 : c2
+		C3 : c3
+		store1 = C1.from_world(world1.components).insert(entity, component1).map_err(|_| crash "Entity that was just created doesn't exist").collapse()
+		store2 = C2.from_world(world1.components).insert(entity, component2).map_err(|_| crash "Entity that was just created doesn't exist").collapse()
+		store3 = C3.from_world(world1.components).insert(entity, component3).map_err(|_| crash "Entity that was just created doesn't exist").collapse()
+
+		(World.with_store(World.with_store(World.with_store(world1, store1), store2), store3), entity)
+	}
+
 	map_store : World, (Store(c) -> Store(c)) -> World
 		where [
 			c.from_world : s -> Store(c),
@@ -315,6 +354,27 @@ World(s) := {
 			},
 		)
 		world.with_store(Store.(new_d)).with_store(Store.(new_c))
+	}
+
+	## Read-only counterpart to `map_comp2`: every entity that has both components
+	##
+	## Filtering is done from right to left, so prefer putting smaller components with fewer entities on the right
+	query2 : World -> List((Entity, c, d))
+		where [
+			c.from_world : s -> Store(c),
+			d.from_world : s -> Store(d),
+		]
+	query2 = |world| {
+		C : c
+		D : d
+		store_c = C.from_world(world.components)
+		D.from_world(world.components).iter().fold(
+			[],
+			|acc, (ent, comp_d)| match store_c.get(ent) {
+				Ok(comp_c) => acc.append((ent, comp_c, comp_d))
+				Err(_) => acc
+			},
+		)
 	}
 
 	with_store : World, Store(c) -> World
@@ -406,6 +466,16 @@ Pointer := {}.{
 	to_world : { pointer : Store(Pointer), ..r }, Store(Pointer) -> { pointer : Store(Pointer), ..r }
 	to_world = |storage, store| {
 		{ ..storage, pointer: store }
+	}
+}
+
+Radius := F32.{
+	from_world : { radius : Store(Radius), .. } -> Store(Radius)
+	from_world = |storage| storage.radius
+
+	to_world : { radius : Store(Radius), ..r }, Store(Radius) -> { radius : Store(Radius), ..r }
+	to_world = |storage, store| {
+		{ ..storage, radius: store }
 	}
 }
 
