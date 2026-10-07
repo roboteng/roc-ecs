@@ -11,7 +11,7 @@ import rr.Math
 ## State kept between updates: prepared text and layout that can be reused,
 ## plus the latest pointer position, button state, and elapsed time needed to
 ## draw the next frame.
-Model : {
+Model(s) : {
 	title : Text.Prepared,
 	help : Text.Prepared,
 	layout : Layout,
@@ -21,7 +21,7 @@ Model : {
 	## Seconds since launch, folded in from `input.time`. `render!` gets no
 	## input, so anything that moves has to be read off the model like this.
 	elapsed : F32,
-	world : MyWorld,
+	world : World(s),
 }
 
 Layout : {
@@ -48,7 +48,7 @@ init! = App.init(
 			accent_on: Bool.False,
 			elapsed: 0,
 			world: {
-				world1 = new_world().add_input(write_time)
+				world1 = World.empty({ time: Store.empty() }).add_input(write_time)
 				(world2, _) = world1.spawn(
 					Time.(
 						{
@@ -118,14 +118,10 @@ render! = |model, frame| {
 	Ok({})
 }
 
-write_time : (MyWorld, App.Input(Msg) => Try(MyWorld, []))
-write_time = |World.(w), io| {
+write_time : (World(s), App.Input(Msg) => Try(World(s), []))
+write_time = |w, io| {
 	dt = io.time.elapsed_seconds
-	Store.(time) = w.components.time
-	store = time.map(|_k, (gen, v)| (gen, Time.({ total: v.total + dt, dt: dt })))
-	dbg store
-	Storage.(components) = w.components
-	Ok(World.({ ..w, components: Storage.({ ..components, time: Store.(store) }) }))
+	Ok(w.map_comp(|Time.(v)| Time.({ total: v.total + dt, dt: dt })))
 }
 
 World(s) := {
@@ -220,39 +216,45 @@ World(s) := {
 		store = C.from_world(world.components).insert(entity, component)
 		(World.({ ..world1, components: C.to_world(world1.components, store) }), entity)
 	}
+
+	map_store : World, (Store(c) -> Store(c)) -> World
+		where [
+			c.from_world : s -> Store(c),
+			c.to_world : s, Store(c) -> s,
+		]
+	map_store = |World.(world), map| {
+		C : c
+		World.(
+			{
+				..world,
+				components: C.to_world(world.components, map(C.from_world(world.components))),
+			},
+		)
+	}
+
+	map_comp : World, (c -> c) -> World
+		where [
+			c.from_world : s -> Store(c),
+			c.to_world : s, Store(c) -> s,
+		]
+	map_comp = |World.(world), fn| {
+		C : c
+		World.(
+			{
+				..world,
+				components: C.to_world(world.components, C.from_world(world.components).map(fn)),
+			},
+		)
+	}
 }
-
-Storage := {
-	time : Store(Time),
-	text : Store(Text.Prepared),
-	pointer : Store({}),
-	position : Store(Math.Vec2),
-	size : Store(Math.Vec2),
-	radius : Store(F32),
-	fill_color : Store(Color),
-}
-
-MyWorld : World(Storage)
-
-new_world = || World.empty(
-	Storage.(
-		{
-			time: Store.empty(),
-			text: Store.empty(),
-			pointer: Store.empty(),
-			position: Store.empty(),
-			size: Store.empty(),
-			radius: Store.empty(),
-			fill_color: Store.empty(),
-		},
-	),
-)
 
 Store(a) := Dict(EntityId, (GenerationId, a)).{
 	empty = || Store.(Dict.empty())
 
 	insert : Store, Entity, a -> Store
 	insert = |Store.(store), Entity.(ent, gen), comp| Store.(store.insert(ent, (gen, comp)))
+
+	map = |Store.(store), fn| Store.(Dict.map(store, |_ent, (gen, v)| (gen, fn(v))))
 
 	get : Store, Entity -> Try(a, _)
 	get = |Store.(store), Entity.(ent, gen)| {
@@ -286,13 +288,12 @@ Time := {
 	dt : F32,
 	total : F32,
 }.{
-	from_world : Storage -> Store(Time)
+	from_world : { time : Store(Time), .. } -> Store(Time)
 	from_world = |storage| storage.time
 
-	to_world : Storage, Store(Time) -> Storage
+	to_world : { time : Store(Time), ..r }, Store(Time) -> { time : Store(Time), ..r }
 	to_world = |storage, store| {
-		Storage.(s) = storage
-		Storage.({ ..s, time: store })
+		{ ..storage, time: store }
 	}
 }
 
