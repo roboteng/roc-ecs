@@ -52,7 +52,9 @@ init! = App.init(
 					time: Store.empty(),
 					pos: Store.empty(),
 					pointer: Store.empty(),
-				}).add_input(write_time).add_input(write_pointer)
+				})
+					.add_input(write_time)
+					.add_input(write_pointer)
 				(world2, _) = world1.spawn(
 					Time.(
 						{
@@ -188,7 +190,6 @@ World(s) := {
 
 	spawn_empty : World -> (World, Entity)
 	spawn_empty = |world| {
-		len = world.unused.len()
 		match world.unused.last() {
 			Err(ListWasEmpty) => {
 				Store.(entities) = world.entities
@@ -199,13 +200,14 @@ World(s) := {
 					World.(
 						{
 							..w,
-							entities: world.entities.insert(entity, {}),
+							entities: world.entities.insert(entity, {}).map_err(|_| crash "Entity should exist").collapse(),
 						},
 					),
 					entity,
 				)
 			}
 			Ok(ent) => {
+				len = world.unused.len()
 				unused = world.unused.take_first(len - 1)
 				n_ent = ent.inc_gen()
 				World.(w) = world
@@ -214,7 +216,6 @@ World(s) := {
 						{
 							..w,
 							unused: unused,
-
 						},
 					),
 					n_ent,
@@ -229,10 +230,10 @@ World(s) := {
 			c.to_world : s, Store(c) -> s,
 		]
 	spawn = |world, component| {
-		(World.(world1), entity) = world.spawn_empty()
+		(world1, entity) = world.spawn_empty()
 		C : c
-		store = C.from_world(world.components).insert(entity, component)
-		(World.({ ..world1, components: C.to_world(world1.components, store) }), entity)
+		store = C.from_world(world.components).insert(entity, component).map_err(|_| crash "Entity should exist").collapse()
+		(World.with_store(world1, store), entity)
 	}
 
 	spawn2 : World(s), c1, c2 -> (World(s), Entity)
@@ -243,20 +244,13 @@ World(s) := {
 			c2.to_world : s, Store(c2) -> s,
 		]
 	spawn2 = |world, component1, component2| {
-		(World.(world1), entity) = world.spawn_empty()
+		(world1, entity) = world.spawn_empty()
 		C1 : c1
 		C2 : c2
-		store1 = C1.from_world(world.components).insert(entity, component1)
-		store2 = C2.from_world(world.components).insert(entity, component2)
-		(
-			World.(
-				{
-					..world1,
-					components: C2.to_world(C1.to_world(world1.components, store1), store2),
-				},
-			),
-			entity,
-		)
+		store1 = C1.from_world(world1.components).insert(entity, component1).map_err(|_| crash "Entity that was just created doesn't exist").collapse()
+		store2 = C2.from_world(world1.components).insert(entity, component2).map_err(|_| crash "Entity that was just created doesn't exist").collapse()
+
+		(World.with_store(World.with_store(world1, store1), store2), entity)
 	}
 
 	map_store : World, (Store(c) -> Store(c)) -> World
@@ -279,16 +273,14 @@ World(s) := {
 			c.from_world : s -> Store(c),
 			c.to_world : s, Store(c) -> s,
 		]
-	map_comp = |World.(world), fn| {
+	map_comp = |world, fn| {
 		C : c
-		World.(
-			{
-				..world,
-				components: C.to_world(world.components, C.from_world(world.components).map(fn)),
-			},
-		)
+		world.with_store(C.from_world(world.components).map(fn))
 	}
 
+	## Allows data to move between to different Components
+	##
+	## Filtering is done from right to left, so prefer putting smaller components with fewer entities on the right
 	map_comp2 : World, (c, d -> (c, d)) -> World
 		where [
 			c.from_world : s -> Store(c),
@@ -296,7 +288,7 @@ World(s) := {
 			d.from_world : s -> Store(d),
 			d.to_world : s, Store(d) -> s,
 		]
-	map_comp2 = |World.(world), fn| {
+	map_comp2 = |world, fn| {
 		C : c
 		D : d
 		Store.(store_c) = C.from_world(world.components)
@@ -311,20 +303,35 @@ World(s) := {
 				_ => (acc_c, acc_d)
 			},
 		)
-		World.(
-			{
-				..world,
-				components: C.to_world(D.to_world(world.components, Store.(new_d)), Store.(new_c)),
-			},
-		)
+		world.with_store(Store.(new_d)).with_store(Store.(new_c))
+	}
+
+	with_store : World, Store(c) -> World
+		where [
+			c.to_world : s, Store(c) -> s,
+		]
+	with_store = |World.(w), components| {
+		C : c
+		World.({ ..w, components: C.to_world(w.components, components) })
+	}
+
+	get_store : World -> Store(c)
+		where [
+			c.from_world : s -> Store(c),
+			c.to_world : s, Store(c) -> s,
+		]
+	get_store = |World.(w)| {
+		C : c
+		C.from_world(w.components)
 	}
 }
 
 Store(a) := Dict(EntityId, (GenerationId, a)).{
 	empty = || Store.(Dict.empty())
 
-	insert : Store, Entity, a -> Store
-	insert = |Store.(store), Entity.(ent, gen), comp| Store.(store.insert(ent, (gen, comp)))
+	## TODO: Check the generation of the entity
+	insert : Store, Entity, a -> Try(Store, [])
+	insert = |Store.(store), Entity.(ent, gen), comp| Ok(Store.(store.insert(ent, (gen, comp))))
 
 	map = |Store.(store), fn| Store.(Dict.map(store, |_ent, (gen, v)| (gen, fn(v))))
 
