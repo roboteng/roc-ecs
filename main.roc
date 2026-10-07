@@ -48,23 +48,16 @@ init! = App.init(
 			accent_on: Bool.False,
 			elapsed: 0,
 			world: {
-				world1 = World.empty({
+				World.empty({
 					time: Store.empty(),
 					pos: Store.empty(),
 					pointer: Store.empty(),
 				})
 					.add_input(write_time)
 					.add_input(write_pointer)
-				(world2, _) = world1.spawn(
-					Time.(
-						{
-							dt: 0,
-							total: 0,
-						},
-					),
-				)
-				(world3, _) = world2.spawn2(Pos.({ x: 0, y: 0 }), Pointer.({}))
-				world3
+					.add_render(render_circle!)
+					.spawn(Time.({ dt: 0, total: 0 })).0
+					.spawn2(Pos.({ x: 0, y: 0 }), Pointer.({})).0
 			},
 		})
 	},
@@ -122,16 +115,20 @@ render! = |model, frame| {
 	frame.circle!({ center: model.pointer, radius: 26 + 8 * pulse, style: Draw.filled(Color.with_alpha(accent, 40)) })
 	frame.circle!({ center: model.pointer, radius: 18, style: Draw.filled_and_outlined(accent, Color.white, 3) })
 
+	for renderer in model.world.renders {
+		renderer(model.world, frame)?
+	}
+
 	Ok({})
 }
 
-write_time : (World(s), App.Input(Msg) => Try(World(s), []))
+write_time : InputSystem(s)
 write_time = |w, io| {
 	dt = io.time.elapsed_seconds
 	Ok(w.map_comp(|Time.(v)| Time.({ total: v.total + dt, dt: dt })))
 }
 
-write_pointer : (World(s), App.Input(Msg) => Try(World(s), []))
+write_pointer : InputSystem(s)
 write_pointer = |w, input| {
 	mouse = input.devices.mouse
 	Ok(
@@ -144,12 +141,26 @@ write_pointer = |w, input| {
 	)
 }
 
+render_circle! : RenderSystem({ pos : Store(Pos), .. })
+render_circle! = |world, frame| {
+	for (_ent, pos) in world.components.pos {
+		frame.circle!({ center: { x: pos.x, y: pos.y }, radius: 45, style: Draw.filled(Color.with_alpha(Color.from_hex_rgb(0x00ff00), 40)) })
+	}
+	Ok({})
+}
+
+InputSystem(s) : World(s), App.Input(Msg) => Try(World(s), [])
+
+UpdateSystem(s) : World(s) -> World(s)
+
+RenderSystem(s) : World(s), Draw.Frame => Try({}, [Exit(I64)])
+
 World(s) := {
 	entities : Store({}),
 	unused : List(Entity),
-	inputs : List((World(s), App.Input(Msg) => Try(World(s), []))),
-	updates : List(World(s) -> World(s)),
-	renders : List((World(s), Draw.Frame => Try({}, [Exit(I64)]))),
+	inputs : List(InputSystem(s)),
+	updates : List(UpdateSystem(s)),
+	renders : List(RenderSystem(s)),
 	components : s,
 }.{
 	empty : s -> World(s)
@@ -318,7 +329,6 @@ World(s) := {
 	get_store : World -> Store(c)
 		where [
 			c.from_world : s -> Store(c),
-			c.to_world : s, Store(c) -> s,
 		]
 	get_store = |World.(w)| {
 		C : c
@@ -344,6 +354,9 @@ Store(a) := Dict(EntityId, (GenerationId, a)).{
 			Err(EntityExpired)
 		}
 	}
+
+	iter : Store -> Iter((Entity, a))
+	iter = |Store.(s)| Dict.iter(s).map(|(ent_id, (gen, comp))| (Entity.(ent_id, gen), comp))
 }
 
 EntityId := U32.{
