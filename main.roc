@@ -48,7 +48,11 @@ init! = App.init(
 			accent_on: Bool.False,
 			elapsed: 0,
 			world: {
-				world1 = World.empty({ time: Store.empty() }).add_input(write_time)
+				world1 = World.empty({
+					time: Store.empty(),
+					pos: Store.empty(),
+					pointer: Store.empty(),
+				}).add_input(write_time).add_input(write_pointer)
 				(world2, _) = world1.spawn(
 					Time.(
 						{
@@ -57,7 +61,8 @@ init! = App.init(
 						},
 					),
 				)
-				world2
+				(world3, _) = world2.spawn2(Pos.({ x: 0, y: 0 }), Pointer.({}))
+				world3
 			},
 		})
 	},
@@ -122,6 +127,19 @@ write_time : (World(s), App.Input(Msg) => Try(World(s), []))
 write_time = |w, io| {
 	dt = io.time.elapsed_seconds
 	Ok(w.map_comp(|Time.(v)| Time.({ total: v.total + dt, dt: dt })))
+}
+
+write_pointer : (World(s), App.Input(Msg) => Try(World(s), []))
+write_pointer = |w, input| {
+	mouse = input.devices.mouse
+	Ok(
+		w.map_comp2(
+			|Pos.(_), Pointer.(_)| (
+				Pos.({ x: mouse.x, y: mouse.y }),
+				Pointer.({}),
+			),
+		),
+	)
 }
 
 World(s) := {
@@ -217,6 +235,30 @@ World(s) := {
 		(World.({ ..world1, components: C.to_world(world1.components, store) }), entity)
 	}
 
+	spawn2 : World(s), c1, c2 -> (World(s), Entity)
+		where [
+			c1.from_world : s -> Store(c1),
+			c1.to_world : s, Store(c1) -> s,
+			c2.from_world : s -> Store(c2),
+			c2.to_world : s, Store(c2) -> s,
+		]
+	spawn2 = |world, component1, component2| {
+		(World.(world1), entity) = world.spawn_empty()
+		C1 : c1
+		C2 : c2
+		store1 = C1.from_world(world.components).insert(entity, component1)
+		store2 = C2.from_world(world.components).insert(entity, component2)
+		(
+			World.(
+				{
+					..world1,
+					components: C2.to_world(C1.to_world(world1.components, store1), store2),
+				},
+			),
+			entity,
+		)
+	}
+
 	map_store : World, (Store(c) -> Store(c)) -> World
 		where [
 			c.from_world : s -> Store(c),
@@ -243,6 +285,36 @@ World(s) := {
 			{
 				..world,
 				components: C.to_world(world.components, C.from_world(world.components).map(fn)),
+			},
+		)
+	}
+
+	map_comp2 : World, (c, d -> (c, d)) -> World
+		where [
+			c.from_world : s -> Store(c),
+			c.to_world : s, Store(c) -> s,
+			d.from_world : s -> Store(d),
+			d.to_world : s, Store(d) -> s,
+		]
+	map_comp2 = |World.(world), fn| {
+		C : c
+		D : d
+		Store.(store_c) = C.from_world(world.components)
+		Store.(store_d) = D.from_world(world.components)
+		(new_c, new_d) = store_d.fold(
+			(store_c, store_d),
+			|(acc_c, acc_d), ent, (gen_d, comp_d)| match store_c.get(ent) {
+				Ok((gen_c, comp_c)) if gen_c == gen_d => {
+					(out_c, out_d) = fn(comp_c, comp_d)
+					(acc_c.insert(ent, (gen_c, out_c)), acc_d.insert(ent, (gen_d, out_d)))
+				}
+				_ => (acc_c, acc_d)
+			},
+		)
+		World.(
+			{
+				..world,
+				components: C.to_world(D.to_world(world.components, Store.(new_d)), Store.(new_c)),
 			},
 		)
 	}
@@ -294,6 +366,26 @@ Time := {
 	to_world : { time : Store(Time), ..r }, Store(Time) -> { time : Store(Time), ..r }
 	to_world = |storage, store| {
 		{ ..storage, time: store }
+	}
+}
+
+Pos := { x : F32, y : F32 }.{
+	from_world : { pos : Store(Pos), .. } -> Store(Pos)
+	from_world = |storage| storage.pos
+
+	to_world : { pos : Store(Pos), ..r }, Store(Pos) -> { pos : Store(Pos), ..r }
+	to_world = |storage, store| {
+		{ ..storage, pos: store }
+	}
+}
+
+Pointer := {}.{
+	from_world : { pointer : Store(Pointer), .. } -> Store(Pointer)
+	from_world = |storage| storage.pointer
+
+	to_world : { pointer : Store(Pointer), ..r }, Store(Pointer) -> { pointer : Store(Pointer), ..r }
+	to_world = |storage, store| {
+		{ ..storage, pointer: store }
 	}
 }
 
