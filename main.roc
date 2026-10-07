@@ -47,7 +47,18 @@ init! = App.init(
 			pointer: { x: 400, y: 300 },
 			accent_on: Bool.False,
 			elapsed: 0,
-			world: new_world(),
+			world: {
+				world1 = new_world().add_input(write_time)
+				(world2, _) = world1.spawn(
+					Time.(
+						{
+							dt: 0,
+							total: 0,
+						},
+					),
+				)
+				world2
+			},
 		})
 	},
 )
@@ -68,6 +79,7 @@ update! = |model, program_input, _io| {
 			pointer: input.mouse.position(),
 			accent_on: input.mouse.button_down(Left),
 			elapsed: model.elapsed + program_input.time.elapsed_seconds,
+			world: model.world.input!(program_input)?,
 		})
 	}
 }
@@ -106,6 +118,16 @@ render! = |model, frame| {
 	Ok({})
 }
 
+write_time : (MyWorld, App.Input(Msg) => Try(MyWorld, []))
+write_time = |World.(w), io| {
+	dt = io.time.elapsed_seconds
+	Store.(time) = w.components.time
+	store = time.map(|_k, (gen, v)| (gen, Time.({ total: v.total + dt, dt: dt })))
+	dbg store
+	Storage.(components) = w.components
+	Ok(World.({ ..w, components: Storage.({ ..components, time: Store.(store) }) }))
+}
+
 World(s) := {
 	entities : Store({}),
 	unused : List(Entity),
@@ -125,6 +147,10 @@ World(s) := {
 			renders: [],
 		},
 	)
+
+	add_input = |World.(world), system| World.({ ..world, inputs: world.inputs.append(system) })
+	add_system = |World.(world), system| World.({ ..world, updates: world.updates.append(system) })
+	add_render = |World.(world), system| World.({ ..world, renders: world.renders.append(system) })
 
 	input! : World, App.Input(Msg) => Try(World, [])
 	input! = |w, io| {
@@ -182,10 +208,22 @@ World(s) := {
 			}
 		}
 	}
+
+	spawn : World(s), c -> (World(s), Entity)
+		where [
+			c.from_world : s -> Store(c),
+			c.to_world : s, Store(c) -> s,
+		]
+	spawn = |world, component| {
+		(World.(world1), entity) = world.spawn_empty()
+		C : c
+		store = C.from_world(world.components).insert(entity, component)
+		(World.({ ..world1, components: C.to_world(world1.components, store) }), entity)
+	}
 }
 
 Storage := {
-	time : Store(F32),
+	time : Store(Time),
 	text : Store(Text.Prepared),
 	pointer : Store({}),
 	position : Store(Math.Vec2),
@@ -242,6 +280,20 @@ Entity := (EntityId, GenerationId).{
 
 Center := Math.Vec2.{
 	comp = || Center
+}
+
+Time := {
+	dt : F32,
+	total : F32,
+}.{
+	from_world : Storage -> Store(Time)
+	from_world = |storage| storage.time
+
+	to_world : Storage, Store(Time) -> Storage
+	to_world = |storage, store| {
+		Storage.(s) = storage
+		Storage.({ ..s, time: store })
+	}
 }
 
 Components := [Center, Unused]
