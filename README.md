@@ -4,5 +4,5 @@ An ECS implementation in Roc.
 
 ## Goals
 
-- Acheive a Becy-like API and performance, all while in pure safe Roc.
-- Use the type inferrance of Roc, instead of Rust macros
+- Achieve a Bevy-like API and performance, all while in pure safe Roc.
+- Use the type inference of Roc, instead of Rust macros
