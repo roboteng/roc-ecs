@@ -26,7 +26,7 @@
 Ecs :: [].{
 
 	## A handle to a spawned entity. Handles to despawned entities stay
-	## invalid forever: the slot is reused, but with a new generation.
+	## invalid forever: the id is reused, but under a new generation.
 	Entity :: { id : EntityId, gen : Gen }.{
 		is_eq : _
 		to_hash : _
@@ -48,11 +48,11 @@ Ecs :: [].{
 	World(col) :: {
 		archetypes : List(Archetype(col)),
 		slots : List(Slot),
-		free : List(EntityId),
+		despawned : List(Entity),
 		systems : List(World(col) -> World(col)),
 	}.{
 		empty : () -> World(col)
-		empty = || World.({ archetypes: [], slots: [], free: [], systems: [] })
+		empty = || World.({ archetypes: [], slots: [], despawned: [], systems: [] })
 
 		## Systems run in the order they were added, once per `update`.
 		add_system : World(col), (World(col) -> World(col)) -> World(col)
@@ -60,7 +60,7 @@ Ecs :: [].{
 			{
 				archetypes: world.archetypes,
 				slots: world.slots,
-				free: world.free,
+				despawned: world.despawned,
 				systems: world.systems.append(system),
 			},
 		)
@@ -76,13 +76,13 @@ Ecs :: [].{
 		spawn = |world, Bundle.(columns)| {
 			(archetypes, index) = find_or_create(world.archetypes, columns)
 			target = arch_at(archetypes, index)
-			claimed = claim(world.slots, world.free, index, target.entities.len())
+			claimed = claim(world.slots, world.despawned, index, target.entities.len())
 			filled = {
 				entities: target.entities.append(claimed.entity),
 				columns: target.columns.map(|column| pull(column, columns, 0)),
 			}
 			(
-				World.({ archetypes: put_arch(archetypes, index, filled), slots: claimed.slots, free: claimed.free, systems: world.systems }),
+				World.({ archetypes: put_arch(archetypes, index, filled), slots: claimed.slots, despawned: claimed.despawned, systems: world.systems }),
 				claimed.entity,
 			)
 		}
@@ -109,8 +109,8 @@ Ecs :: [].{
 				World.(
 					{
 						archetypes: put_arch(world.archetypes, slot.arch, shrunk),
-						slots: retire(reseat(world.slots, shrunk, slot.row), entity),
-						free: world.free.append(entity.id),
+						slots: retire(reseat(world.slots, shrunk, slot.row), entity, world.despawned.len()),
+						despawned: world.despawned.append(entity),
 						systems: world.systems,
 					},
 				),
@@ -140,7 +140,7 @@ Ecs :: [].{
 			match fetch(source) {
 				Ok(list) => {
 					replaced = store(source, list.set(slot.row, component).ok_or(list))
-					Ok(World.({ archetypes: put_arch(world.archetypes, slot.arch, replaced), slots: world.slots, free: world.free, systems: world.systems }))
+					Ok(World.({ archetypes: put_arch(world.archetypes, slot.arch, replaced), slots: world.slots, despawned: world.despawned, systems: world.systems }))
 				}
 				Err(_) => {
 					column = column_of([component])
@@ -209,7 +209,7 @@ Ecs :: [].{
 	IOWorld(col, i, o, e) := {
 		inner : World(col),
 		input_systems : List((IOWorld(col, i, o, e), i => Try(IOWorld(col, i, o, e), e))),
-		output_systems : List((IOWorld(col, i, o, e) => Try(o, e))),
+		output_systems : List((IOWorld(col, i, o, e), o => Try({}, e))),
 	}.{
 		new : World(col) -> IOWorld(col, i, o, e)
 		new = |world| IOWorld.({ inner: world, input_systems: [], output_systems: [] })
@@ -223,7 +223,7 @@ Ecs :: [].{
 			},
 		)
 
-		add_output : IOWorld(col, i, o, e), (IOWorld(col, i, o, e) => Try(o, e)) -> IOWorld(col, i, o, e)
+		add_output : IOWorld(col, i, o, e), (IOWorld(col, i, o, e), o => Try({}, e)) -> IOWorld(col, i, o, e)
 		add_output = |io_world, system| IOWorld.(
 			{
 				inner: io_world.inner,
@@ -254,13 +254,12 @@ Ecs :: [].{
 		)
 
 		## Runs every output system and collects what they produce.
-		output! : IOWorld(col, i, o, e) => Try(List(o), e)
-		output! = |io_world| {
-			var $outputs = []
+		output! : IOWorld(col, i, o, e), o => Try({}, e)
+		output! = |io_world, out| {
 			for system in io_world.output_systems {
-				$outputs = $outputs.append(system(io_world)?)
+				system(io_world, out)?
 			}
-			Ok($outputs)
+			Ok({})
 		}
 	}
 
@@ -420,9 +419,15 @@ EntityId : U32
 Gen : U32
 
 ## Index into a world's `archetypes`.
-ArchetypeId : U64
+## Where an entity's handle is kept: a row of one of the world's `archetypes`,
+## or a row of its `despawned` list.
+ArchetypeId : [Despawned, Live(U64)]
 
-Slot : { gen : Gen, arch : ArchetypeId, row : U64, alive : Bool }
+Slot : { gen : Gen, arch : ArchetypeId, row : U64 }
+
+## A live entity's slot, with the archetype resolved to an index into
+## `archetypes`.
+Seat : { gen : Gen, arch : U64, row : U64 }
 
 column_of : List(c) -> Column(col) where [c.Component(col)]
 column_of = |items| {
@@ -499,24 +504,24 @@ rewrite = |selection, fn| {
 		{
 			archetypes: List.map2(selection.mask, world.archetypes, |selected, arch| if selected fn(arch) else arch),
 			slots: world.slots,
-			free: world.free,
+			despawned: world.despawned,
 			systems: world.systems,
 		},
 	)
 }
 
-arch_at : List(Archetype(col)), ArchetypeId -> Archetype(col)
+arch_at : List(Archetype(col)), U64 -> Archetype(col)
 arch_at = |archetypes, index| match archetypes.get(index) {
 	Ok(arch) => arch
 	Err(_) => crash "Ecs: a slot points at an archetype that does not exist"
 }
 
-put_arch : List(Archetype(col)), ArchetypeId, Archetype(col) -> List(Archetype(col))
+put_arch : List(Archetype(col)), U64, Archetype(col) -> List(Archetype(col))
 put_arch = |archetypes, index, arch| archetypes.set(index, arch).ok_or(archetypes)
 
 ## The archetype holding exactly the component types in `shape`, added to the
 ## list if this is the first entity to need it.
-find_or_create : List(Archetype(col)), List(Column(col)) -> (List(Archetype(col)), ArchetypeId)
+find_or_create : List(Archetype(col)), List(Column(col)) -> (List(Archetype(col)), U64)
 find_or_create = |archetypes, shape| {
 	same_shape = |arch| arch.columns.len() == shape.len() and shape.all(|wanted| arch.columns.any(|column| (wanted.matches)(column.data)))
 	match archetypes.find_first_index(same_shape) {
@@ -550,41 +555,42 @@ reseat = |slots, arch, row| match arch.entities.get(row) {
 	Err(_) => slots
 }
 
-retire : List(Slot), Ecs.Entity -> List(Slot)
-retire = |slots, entity| slots.update(entity.id.to_u64(), |slot| { ..slot, alive: Bool.False, gen: slot.gen + 1 }).ok_or(slots)
+## The slot keeps its generation: it only changes when the id is handed out
+## again, in `claim`.
+retire : List(Slot), Ecs.Entity, U64 -> List(Slot)
+retire = |slots, entity, row| slots.update(entity.id.to_u64(), |slot| { ..slot, arch: Despawned, row: row }).ok_or(slots)
 
-claim : List(Slot), List(EntityId), ArchetypeId, U64 -> { slots : List(Slot), free : List(EntityId), entity : Ecs.Entity }
-claim = |slots, free, arch, row| match free.last() {
-	Ok(id) => {
-		gen = match slots.get(id.to_u64()) {
-			Ok(slot) => slot.gen
-			Err(_) => 0
-		}
+## Reuses the most recently despawned id, under the next generation, before
+## making a new one.
+claim : List(Slot), List(Ecs.Entity), U64, U64 -> { slots : List(Slot), despawned : List(Ecs.Entity), entity : Ecs.Entity }
+claim = |slots, despawned, arch, row| match despawned.last() {
+	Ok(old) => {
+		gen = old.gen + 1
 		{
-			slots: slots.set(id.to_u64(), { gen: gen, arch: arch, row: row, alive: Bool.True }).ok_or(slots),
-			free: free.drop_last(1),
-			entity: { id: id, gen: gen },
+			slots: slots.set(old.id.to_u64(), { gen: gen, arch: Live(arch), row: row }).ok_or(slots),
+			despawned: despawned.drop_last(1),
+			entity: { id: old.id, gen: gen },
 		}
 	}
 	Err(_) => {
 		id = slots.len().to_u32_wrap()
 		{
-			slots: slots.append({ gen: 0, arch: arch, row: row, alive: Bool.True }),
-			free: free,
+			slots: slots.append({ gen: 0, arch: Live(arch), row: row }),
+			despawned: despawned,
 			entity: { id: id, gen: 0 },
 		}
 	}
 }
 
-locate : List(Slot), Ecs.Entity -> Try(Slot, [NoSuchEntity])
+locate : List(Slot), Ecs.Entity -> Try(Seat, [NoSuchEntity])
 locate = |slots, entity| match slots.get(entity.id.to_u64()) {
-	Ok(slot) if slot.alive and slot.gen == entity.gen => Ok(slot)
+	Ok({ gen, arch: Live(arch), row }) if gen == entity.gen => Ok({ gen: gen, arch: arch, row: row })
 	_ => Err(NoSuchEntity)
 }
 
 ## Moves an entity to the archetype for `shape`, carrying over every component
 ## the two archetypes share and taking the rest from `extra`.
-migrate : Ecs.World(col), Ecs.Entity, Slot, List(Column(col)), List(Column(col)) -> Ecs.World(col)
+migrate : Ecs.World(col), Ecs.Entity, Seat, List(Column(col)), List(Column(col)) -> Ecs.World(col)
 migrate = |world, entity, slot, shape, extra| {
 	source = arch_at(world.archetypes, slot.arch)
 	(archetypes, index) = find_or_create(world.archetypes, shape)
@@ -594,12 +600,12 @@ migrate = |world, entity, slot, shape, extra| {
 		columns: target.columns.map(|column| pull(pull(column, source.columns, slot.row), extra, 0)),
 	}
 	shrunk = remove_row(source, slot.row)
-	moved = { gen: slot.gen, arch: index, row: target.entities.len(), alive: Bool.True }
+	moved = { gen: slot.gen, arch: Live(index), row: target.entities.len() }
 	Ecs.World.(
 		{
 			archetypes: put_arch(put_arch(archetypes, index, filled), slot.arch, shrunk),
 			slots: reseat(world.slots, shrunk, slot.row).set(entity.id.to_u64(), moved).ok_or(world.slots),
-			free: world.free,
+			despawned: world.despawned,
 			systems: world.systems,
 		},
 	)
@@ -782,4 +788,19 @@ expect {
 	io_world : Ecs.IOWorld(_, {}, {}, [])
 	io_world = Ecs.IOWorld.new(sample().add_system(step))
 	positions(io_world.update().update().inner) == [(2, 2), (14, 10), (30, 30), (99, 99)]
+}
+
+# Despawned entities wait in their own list, generation untouched, and the
+# most recently despawned id is the first to be reused.
+expect {
+	(world0, first) = Ecs.World.empty().spawn(Ecs.Bundle.empty().add(pos(1, 1)))
+	(world1, second) = world0.spawn(Ecs.Bundle.empty().add(pos(2, 2)))
+	world2 = world1.despawn(first)?.despawn(second)?
+	(world3, third) = world2.spawn(Ecs.Bundle.empty().add(pos(3, 3)))
+	(world4, fourth) = world3.spawn(Ecs.Bundle.empty().add(pos(4, 4)))
+	world2.despawned == [first, second] and world2.len() == 0 and world2.despawn(first).is_err()
+		and third.id == second.id and third.gen == second.gen + 1
+			and fourth.id == first.id and fourth.gen == first.gen + 1
+				and world4.despawned == [] and positions(world4) == [(3, 3), (4, 4)]
+					and !world4.is_alive(first) and !world4.is_alive(second)
 }
