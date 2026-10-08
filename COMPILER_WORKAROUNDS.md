@@ -1,0 +1,139 @@
+# Compiler workarounds
+
+Places where the code is shaped by what the Roc compiler accepts rather than by
+what would read best. Everything here was observed on
+`release-safe-fd6625e8`; when the compiler moves on, each entry says how to
+check whether the workaround can go.
+
+## 1. A nominal type cannot be pattern-matched outside its own module
+
+**What fails.** `Name.(inner)` as a pattern is only accepted in the module that
+defines `Name`. Anywhere else it is rejected with `The type Name is not
+declared in this scope`, even though the same `Name.(value)` is accepted as an
+expression. All of these were tried from another module and all fail:
+
+```roc
+f = |Lib.Inner.(r)| r.x                 # qualified, lambda argument
+f = |v| match v { Lib.Inner.(r) => r.x } # qualified, match branch
+Lib.Inner.(r) = v                        # qualified, destructuring statement
+import Lib exposing [Inner]
+f = |Inner.(r)| r.x                      # exposed name
+Mine : Lib.Inner
+f = |Mine.(r)| r.x                       # local alias ("it is an alias")
+import Top
+f = |Top.(r)| r.x                        # a module's own top-level type
+```
+
+**Why it matters here.** `Ecs` picks which component a query or map touches
+from the types of the closure's arguments, and a pattern such as
+`|Pos.(p), Vel.(v)|` is the natural way to state them. That works inside
+`Ecs.roc` and `RayEcs.roc` for their own types, but `main.roc` cannot write
+`|Position.(p)|` for a `RayEcs` component.
+
+**Workarounds.**
+
+- Every component in `RayEcs.roc` has a `get` that returns what it wraps:
+  `Radius.get(radius)`, or `radius.get()` once the type is known.
+- App-side closures bind the whole component and let something else pin its
+  type. Constructing the result is usually enough:
+
+  ```roc
+  # `Position.(...)` pins the first argument, the local `Follower.(_)` pattern the second
+  world.map_with(|_position, Follower.(_)| Position.(pointer.position()))
+  ```
+
+- Components defined in `main.roc` (`Follower`, `Accent`, `Pulse`) are matched
+  with patterns as usual, since they are local.
+
+**Recheck.** Put `f = |RayEcs.Radius.(r)| r` in `main.roc` and run
+`roc check main.roc`. If it passes, the `get` functions and the `_position`
+style arguments can be replaced with patterns.
+
+## 2. A method cannot be called on a value whose type is not known yet
+
+**What fails.** `value.method()` needs the type of `value` to already be
+resolved. `World.single` and `World.get` return whichever component the caller
+expects, so calling a method on their result directly gives the compiler
+nothing to go on:
+
+```roc
+match world.single() {
+    Ok(pointer) => ... pointer.position() ...
+}
+# This is trying to dispatch a method named from_col on an unresolved type variable
+```
+
+**Workarounds.** Either of these was confirmed to compile:
+
+```roc
+# annotate the result first (what main.roc does)
+found : Try(Pointer, _)
+found = world.single()
+
+# or call the function by its qualified name instead of as a method
+match world.single() {
+    Ok(pointer) => ... Pointer.position(pointer) ...
+}
+```
+
+This one is how static dispatch is specified rather than a bug, so it is
+unlikely to change.
+
+## 3. `roc check` on a module that imports the platform reports no errors
+
+**What fails.** `RayEcs.roc` imports `rr.App`, `rr.Draw` and so on, but the
+`rr` shorthand is only defined by an app header. Checked on its own:
+
+- `roc check RayEcs.roc` prints `No errors found`, whatever the file contains.
+- `roc test RayEcs.roc` shows what is actually going on: `This Input type is
+  declared to be in rr.App, which does not exist`, followed by dozens of
+  errors that follow from it.
+
+**Workaround.** Never check or test `RayEcs.roc` directly. Go through the app,
+which also runs the tests of every module it imports:
+
+```sh
+roc check main.roc
+roc test main.roc
+```
+
+**Recheck.** Introduce a deliberate type error in `RayEcs.roc` and run
+`roc check RayEcs.roc`. If it is reported, the module can be checked alone.
+
+## 4. Effectful functions cannot be called from `expect`
+
+**What fails.** An `expect` cannot call a function with `=>` in its type, and
+`Draw.Frame` only exists inside `render!`. This is stated in the RocRay
+platform's own documentation (`App.Input.for_tests`); it was not probed
+separately here.
+
+**Workaround.** The logic lives in pure functions and the effectful ones are
+thin shells around them:
+
+| Effectful | Pure, tested with `expect` |
+| --- | --- |
+| `RayEcs.draw!` | `RayEcs.scene`, which returns every draw call as data |
+| `RayEcs.read_devices` | `RayEcs.write_devices` |
+
+Nothing asserts that `draw!` issues the calls `scene` returns; that part is
+only exercised by running the app.
+
+## 5. Methods are found on the underlying type, not on an alias
+
+**What fails.** `RayEcs.World(col, msg, e)` is an alias for `Ecs.IOWorld(...)`.
+Method syntax looks methods up on `IOWorld`, so a function defined in
+`RayEcs` cannot be chained onto a world, and a qualified call in a chain does
+not parse:
+
+```roc
+world.add_draw(system)          # no such method on Ecs.IOWorld
+world.RayEcs.add_draw(system)   # parse error: expected a field name after `.`
+```
+
+**Workaround.** `RayEcs` adds no wrappers of its own for registering systems.
+Worlds use `IOWorld.add_input` and `IOWorld.add_output` directly, and the
+`RayEcs` functions that take a world (`RayEcs.default`, `RayEcs.update!`,
+`RayEcs.render!`) are called as plain functions.
+
+Making `RayEcs.World` its own nominal type would give it methods, at the cost
+of unwrapping it in every system. Like entry 2, this is by design.

@@ -181,6 +181,9 @@ Ecs :: [].{
 		query4 : World(col) -> List((Entity, a, b, c, d)) where [a.Component(col), b.Component(col), c.Component(col), d.Component(col)]
 		query4 = |world| world.select().query4()
 
+		query5 : World(col) -> List((Entity, a, b, c, d, e)) where [a.Component(col), b.Component(col), c.Component(col), d.Component(col), e.Component(col)]
+		query5 = |world| world.select().query5()
+
 		single : World(col) -> Try(a, [NoMatch, ManyMatches]) where [a.Component(col)]
 		single = |world| world.select().single()
 
@@ -316,6 +319,18 @@ Ecs :: [].{
 				(Ok(la), Ok(lb), Ok(lc), Ok(ld)) => {
 					abc = List.map4(arch.entities, la, lb, lc, |entity, a, b, c| (entity, a, b, c))
 					List.map2(abc, ld, |(entity, a, b, c), d| (entity, a, b, c, d))
+				}
+				_ => []
+			},
+		)
+
+		query5 : Selection(col) -> List((Entity, a, b, c, d, e)) where [a.Component(col), b.Component(col), c.Component(col), d.Component(col), e.Component(col)]
+		query5 = |selection| gather(
+			selection,
+			|arch| match (fetch(arch), fetch(arch), fetch(arch), fetch(arch), fetch(arch)) {
+				(Ok(la), Ok(lb), Ok(lc), Ok(ld), Ok(le)) => {
+					abc = List.map4(arch.entities, la, lb, lc, |entity, a, b, c| (entity, a, b, c))
+					List.map3(abc, ld, le, |(entity, a, b, c), d, e| (entity, a, b, c, d, e))
 				}
 				_ => []
 			},
@@ -803,4 +818,10 @@ expect {
 			and fourth.id == first.id and fourth.gen == first.gen + 1
 				and world4.despawned == [] and positions(world4) == [(3, 3), (4, 4)]
 					and !world4.is_alive(first) and !world4.is_alive(second)
+}
+
+expect {
+	world = sample().spawn4(pos(1, 2), vel(3, 4), Name.("all"), Frozen.({}))
+	found = world.query5().map(|(_, Pos.(p), Vel.(v), Name.(n), Frozen.(_), Pos.(again))| (p.x, v.dy, n, again.y))
+	found == [(1, 4, "all", 2)]
 }

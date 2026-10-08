@@ -1,37 +1,25 @@
 app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst" }
 
 import rr.App
-import rr.Assets
 import rr.Color
+import rr.Devices
 import rr.Draw
 import rr.Text
-import rr.Font
-import rr.Math
+import Ecs
+import RayEcs exposing [Pointer, Keyboard, Clock, Layer, Position, Size, Radius, CornerRadius, FillColor, BorderColor, BorderWidth, Gradient, RadialGradient, Label, TextColor, TextAlign, FpsCounter]
 
-## State kept between updates: prepared text and layout that can be reused,
-## plus the latest pointer position, button state, and elapsed time needed to
-## draw the next frame.
-Model(s) : {
-	title : Text.Prepared,
-	help : Text.Prepared,
-	layout : Layout,
-	pointer : { x : F32, y : F32 },
-	accent_on : Bool,
+## Everything on screen is an entity in the world: `RayEcs` reads the devices
+## into it on every update and draws it on every render.
+Model(c) : { world : RayEcs.World(c, Msg, []) }
 
-	## Seconds since launch, folded in from `input.time`. `render!` gets no
-	## input, so anything that moves has to be read off the model like this.
-	elapsed : F32,
-	world : World(s),
-}
-
-Layout : {
-	panel : { x : F32, y : F32, width : F32, height : F32 },
-	title_size : Draw.TextSize,
-}
+## Nothing here waits, so there is no task to spawn and no message to fold in.
+## An app that reads a file or fetches a URL gives `Msg` the variants those
+## tasks answer with; see the `task_sleep` and `async_read` examples.
+Msg : []
 
 program = { init!, update!, render! }
 
-init! : App.Init(Model, [ResourceLimit])
+init! : App.Init(Model, [])
 init! = App.init(
 	App.default
 		.with_title("Hello RocRay")
@@ -41,442 +29,171 @@ init! = App.init(
 	|_io| {
 		font = Draw.default_font!()
 		Ok({
-			title: Text.from("Roc :heart: Raylib", font).size(38).prepare!()?,
-			help: Text.from("Move the pointer  -  click for an accent  -  ESC exits", font).size(18).prepare!()?,
-			layout: solve_layout(font),
-			pointer: { x: 400, y: 300 },
-			accent_on: Bool.False,
-			elapsed: 0,
-			world: {
-				World.empty({
-					time: Store.empty(),
-					pos: Store.empty(),
-					pointer: Store.empty(),
-					radius: Store.empty(),
-				})
-					.add_input(write_time)
-					.add_input(write_pointer)
-					.add_system(pulse_circle)
-					.add_render(render_circle!)
-					.spawn(Time.({ dt: 0, total: 0 })).0
-					.spawn3(Pos.({ x: 0, y: 0 }), Pointer.({}), Radius.(45)).0
-			},
+			world: RayEcs.default(
+				scene(font)
+					.add_system(follow_pointer)
+					.add_system(tint_accents)
+					.add_system(pulse),
+			).add_input(quit_on_escape),
 		})
 	},
 )
-
-## Nothing here waits, so there is no task to spawn and no message to fold in.
-## An app that reads a file or fetches a URL gives `Msg` the variants those
-## tasks answer with; see the `task_sleep` and `async_read` examples.
-Msg : []
 
 update! : Model, App.Input(Msg), App.Io => Try(Model, [Exit(I64)])
-update! = |model, program_input, _io| {
-	input = program_input.devices
-	if input.key_pressed(KeyEscape) {
-		Err(Exit(0))
-	} else {
-		Ok({
-			..model,
-			pointer: input.mouse.position(),
-			accent_on: input.mouse.button_down(Left),
-			elapsed: model.elapsed + program_input.time.elapsed_seconds,
-			world: model.world.input!(program_input)?.update(),
-		})
-	}
-}
-
-solve_layout : Text.Font -> Layout
-solve_layout = |font| {
-	panel: { x: 120, y: 150, width: 560, height: 300 },
-	title_size: font.measure({ text: "Roc :heart: Raylib", size: 38, spacing: Text.default_spacing }),
-}
+update! = |model, input, _io| Ok({ world: RayEcs.update!(model.world, input)? })
 
 render! : Model, Draw.Frame => Try({}, [Exit(I64)])
-render! = |model, frame| {
-	accent = if model.accent_on Color.from_hex_rgb(0xf94144) else Color.from_hex_rgb(0x2f80ed)
-	panel = model.layout.panel
-	title_size = model.layout.title_size
-	# One slow sine drives every moving part, so the scene breathes together.
-	pulse = 0.5 + 0.5 * F32.sin(model.elapsed * 1.6)
+render! = |model, frame| RayEcs.render!(model.world, frame)
 
-	frame.rectangle_gradient_v!({ x: 0, y: 0, width: 800, height: 600, color_top: Color.from_hex_rgb(0x131f38), color_bottom: Color.from_hex_rgb(0x070b16) })
-	frame.circle_gradient!({ center: { x: 620, y: 90 }, radius: 220 + 40 * pulse, color_inner: Color.with_alpha(accent, 90), color_outer: Color.with_alpha(accent, 0) })
-	frame.circle_gradient!({ center: { x: 150, y: 540 }, radius: 260, color_inner: Color.with_alpha(Color.from_hex_rgb(0x06d6a0), 45), color_outer: Color.with_alpha(Color.from_hex_rgb(0x06d6a0), 0) })
-	frame.fps!({ color: Color.white, pos: { x: 0, y: 0 }, size: 32 })
+# Scene
 
+blue = Color.from_hex_rgb(0x2f80ed)
+
+red = Color.from_hex_rgb(0xf94144)
+
+green = Color.from_hex_rgb(0x06d6a0)
+
+title = "Roc :heart: Raylib"
+
+at = |x, y| Position.({ x: x, y: y })
+
+## A circle that fades from `color` at this alpha to nothing at its edge.
+fading = |color, alpha| RadialGradient.({ inner: Color.with_alpha(color, alpha), outer: Color.with_alpha(color, 0) })
+
+## The entities, back to front.
+scene = |font| {
+	title_width = font.measure({ text: title, size: 38, spacing: Draw.default_spacing }).width
+	Ecs.World.empty()
+		.spawn3(at(0, 0), Size.({ width: 800, height: 600 }), Gradient.(TopToBottom(Color.from_hex_rgb(0x131f38), Color.from_hex_rgb(0x070b16))))
+	# Two glows on the backdrop; the accent one breathes.
+		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(620, 90)).add(Radius.(220)).add(fading(blue, 90)).add(Accent.(90)).add(Pulse.({ base: 220, amount: 40 }))).0
+		.spawn4(Layer.(1), at(150, 540), Radius.(260), fading(green, 45))
+		.spawn4(Layer.(2), at(0, 0), FpsCounter.(32), TextColor.(Color.white))
 	# A soft drop shadow, then the panel itself over the top of it.
-	frame.rounded_rectangle!({ x: panel.x + 6, y: panel.y + 10, width: panel.width, height: panel.height, radius: 22, segments: 12, style: Draw.filled(Color.with_alpha(Color.black, 90)) })
-	frame.rounded_rectangle!({ x: panel.x, y: panel.y, width: panel.width, height: panel.height, radius: 22, segments: 12, style: Draw.filled_and_outlined(Color.from_hex_rgb(0x18243b), Color.with_alpha(Color.white, 55), 2) })
+		.spawn(Ecs.Bundle.empty().add(Layer.(3)).add(at(126, 160)).add(Size.({ width: 560, height: 300 })).add(CornerRadius.(22)).add(FillColor.(Color.with_alpha(Color.black, 90))).add(BorderColor.(Color.transparent))).0
+		.spawn(Ecs.Bundle.empty().add(Layer.(4)).add(at(120, 150)).add(Size.({ width: 560, height: 300 })).add(CornerRadius.(22)).add(FillColor.(Color.from_hex_rgb(0x18243b))).add(BorderColor.(Color.with_alpha(Color.white, 55))).add(BorderWidth.(2))).0
+	# The title, a rule under it as wide as the title, and the help line.
+		.spawn(Ecs.Bundle.empty().add(Layer.(5)).add(at(400, 230)).add(Label.({ text: title, size: 38, font: font })).add(TextColor.(Color.white)).add(TextAlign.((Top, Center)))).0
+		.spawn(Ecs.Bundle.empty().add(Layer.(5)).add(at(400 - title_width * 0.5, 286.5)).add(Size.({ width: title_width, height: 3 })).add(FillColor.(Color.with_alpha(blue, 170))).add(BorderColor.(Color.transparent)).add(Accent.(170))).0
+		.spawn(Ecs.Bundle.empty().add(Layer.(5)).add(at(400, 310)).add(Label.({ text: "Move the pointer  -  click for an accent  -  ESC exits", size: 18, font: font })).add(TextColor.(Color.from_hex_rgb(0xa8b4cc))).add(TextAlign.((Top, Center)))).0
+	# The pointer: a halo that breathes, a dot, and a faint ring over both.
+		.spawn(Ecs.Bundle.empty().add(Layer.(6)).add(at(400, 300)).add(Radius.(26)).add(FillColor.(Color.with_alpha(blue, 40))).add(Accent.(40)).add(Pulse.({ base: 26, amount: 8 })).add(Follower.({}))).0
+		.spawn(Ecs.Bundle.empty().add(Layer.(6)).add(at(400, 300)).add(Radius.(18)).add(FillColor.(blue)).add(BorderColor.(Color.white)).add(BorderWidth.(3)).add(Accent.(255)).add(Follower.({}))).0
+		.spawn(Ecs.Bundle.empty().add(Layer.(7)).add(at(400, 300)).add(Radius.(32)).add(FillColor.(Color.with_alpha(Color.from_hex_rgb(0x00ff00), 40))).add(Pulse.({ base: 32, amount: 8 })).add(Follower.({}))).0
+}
 
-	model.title.draw!(frame, { pos: { x: 400, y: 230 }, color: Color.white, align: (Top, Center) })
-	frame.line!({ start: { x: 400 - title_size.width * 0.5, y: 288 }, end: { x: 400 + title_size.width * 0.5, y: 288 }, stroke: Draw.stroke(Color.with_alpha(accent, 170), 3) })
-	model.help.draw!(frame, { pos: { x: 400, y: 310 }, color: Color.from_hex_rgb(0xa8b4cc), align: (Top, Center) })
+# Systems
 
-	# The pointer gets a halo that pulses with the same clock as the backdrop.
-	frame.circle!({ center: model.pointer, radius: 26 + 8 * pulse, style: Draw.filled(Color.with_alpha(accent, 40)) })
-	frame.circle!({ center: model.pointer, radius: 18, style: Draw.filled_and_outlined(accent, Color.white, 3) })
-
-	for renderer in model.world.renders {
-		renderer(model.world, frame)?
+## Ends the app when Escape goes down.
+quit_on_escape = |world, _input| {
+	found : Try(Keyboard, _)
+	found = world.inner.single()
+	match found {
+		Ok(keyboard) if keyboard.pressed(KeyEscape) => Err(Exit(0))
+		_ => Ok(world)
 	}
-
-	Ok({})
 }
 
-write_time : InputSystem(s)
-write_time = |w, io| {
-	dt = io.time.elapsed_seconds
-	Ok(w.map_comp(|Time.(v)| Time.({ total: v.total + dt, dt: dt })))
+## Keeps every `Follower` under the pointer.
+follow_pointer = |world| {
+	found : Try(Pointer, _)
+	found = world.single()
+	match found {
+		Ok(pointer) => world.map_with(|_position, Follower.(_)| Position.(pointer.position()))
+		Err(_) => world
+	}
 }
 
-write_pointer : InputSystem(s)
-write_pointer = |w, input| {
-	mouse = input.devices.mouse
-	Ok(
-		w.map_comp2(
-			|Pos.(_), Pointer.(_)| (
-				Pos.({ x: mouse.x, y: mouse.y }),
-				Pointer.({}),
-			),
-		),
-	)
+## Recolors every `Accent`: red while the left button is held, blue otherwise.
+tint_accents = |world| {
+	found : Try(Pointer, _)
+	found = world.single()
+	match found {
+		Ok(pointer) => {
+			accent = if pointer.down(Left) red else blue
+			world
+				.map_with(|_fill, Accent.(alpha)| FillColor.(Color.with_alpha(accent, alpha)))
+				.map_with(|_gradient, Accent.(alpha)| fading(accent, alpha))
+		}
+		Err(_) => world
+	}
 }
 
-pulse_circle : UpdateSystem(
-	{
-		radius : Store(Radius),
-		pos : Store(Pos),
-		time : Store(Time),
-		..r,
+## One slow sine drives every `Pulse`, so the scene breathes together.
+pulse = |world| {
+	found : Try(Clock, _)
+	found = world.single()
+	match found {
+		Ok(clock) => {
+			wave = 0.5 + 0.5 * F32.sin(Clock.get(clock).total * 1.6)
+			world.map_with(|_radius, Pulse.(p)| Radius.(p.base + p.amount * wave))
+		}
+		Err(_) => world
+	}
+}
+
+# Components
+
+## Marks an entity whose `Position` tracks the pointer.
+Follower := {}.{
+	to_col : List(Follower) -> [Followers(List(Follower))]
+	to_col = |list| Followers(list)
+
+	from_col : [Followers(List(Follower)), ..] -> Try(List(Follower), [WrongColumn])
+	from_col = |col| match col {
+		Followers(list) => Ok(list)
+		_ => Err(WrongColumn)
+	}
+}
+
+## Marks an entity drawn in the accent color, at this alpha.
+Accent := U8.{
+	to_col : List(Accent) -> [Accents(List(Accent))]
+	to_col = |list| Accents(list)
+
+	from_col : [Accents(List(Accent)), ..] -> Try(List(Accent), [WrongColumn])
+	from_col = |col| match col {
+		Accents(list) => Ok(list)
+		_ => Err(WrongColumn)
+	}
+}
+
+## Makes an entity's `Radius` swing between `base` and `base + amount`.
+Pulse := { base : F32, amount : F32 }.{
+	to_col : List(Pulse) -> [Pulses(List(Pulse))]
+	to_col = |list| Pulses(list)
+
+	from_col : [Pulses(List(Pulse)), ..] -> Try(List(Pulse), [WrongColumn])
+	from_col = |col| match col {
+		Pulses(list) => Ok(list)
+		_ => Err(WrongColumn)
+	}
+}
+
+# Tests
+
+## What `RayEcs` would draw for a world, back to front.
+drawn = |world| RayEcs.scene(world).map(
+	|command| match command {
+		GradientV(_) => "gradient"
+		GradientH(_) => "gradient"
+		CircleGradient(_) => "glow"
+		Rectangle(_) => "rectangle"
+		RoundedRectangle(_) => "rounded"
+		Circle(_) => "circle"
+		Text(_) => "text"
+		Fps(_) => "fps"
 	},
 )
-pulse_circle = |world| {
-	time : Time
-	time = world.components.time.iter().fold(Time.({ dt: 0, total: 0 }), |_acc, (_ent, t)| t)
-	world.map_comp2(
-		|Radius.(_), Pos.(pos)| (Radius.(32 + 8 * (0.5 + 0.5 * F32.sin(time.total * 1.6))), Pos.(pos)),
-	)
+
+expect drawn(scene(Text.font_stub)) == ["gradient", "glow", "glow", "fps", "rounded", "rounded", "rectangle", "text", "text", "circle", "circle", "circle"]
+
+# Holding the left button turns every accent red, at the alpha it asked for.
+expect {
+	held = App.Input.for_tests({}).with_devices(Devices.none.with_mouse_position({ x: 30, y: 40 }).with_mouse_button_down(Left))
+	world = tint_accents(follow_pointer(RayEcs.write_devices(RayEcs.spawn_devices(scene(Text.font_stub)), held)))
+	fills = world.select().having(Accent.to_col).query1().map(|(_, fill)| FillColor.get(fill))
+	followers = world.select().having(Follower.to_col).query1().map(|(_, position)| Position.get(position))
+	fills == [Color.with_alpha(red, 170), Color.with_alpha(red, 40), Color.with_alpha(red, 255)]
+		and followers == [{ x: 30, y: 40 }, { x: 30, y: 40 }, { x: 30, y: 40 }]
 }
-
-render_circle! : RenderSystem({ pos : Store(Pos), radius : Store(Radius), .. })
-render_circle! = |world, frame| {
-	for (_ent, Pos.(pos), Radius.(r)) in world.query2() {
-		frame.circle!({ center: { x: pos.x, y: pos.y }, radius: r, style: Draw.filled(Color.with_alpha(Color.from_hex_rgb(0x00ff00), 40)) })
-	}
-	Ok({})
-}
-
-InputSystem(s) : World(s), App.Input(Msg) => Try(World(s), [])
-
-UpdateSystem(s) : World(s) -> World(s)
-
-RenderSystem(s) : World(s), Draw.Frame => Try({}, [Exit(I64)])
-
-World(s) := {
-	entities : Store({}),
-	unused : List(Entity),
-	inputs : List(InputSystem(s)),
-	updates : List(UpdateSystem(s)),
-	renders : List(RenderSystem(s)),
-	components : s,
-}.{
-	empty : s -> World(s)
-	empty = |components| World.(
-		{
-			entities: Store.empty(),
-			components: components,
-			unused: [],
-			inputs: [],
-			updates: [],
-			renders: [],
-		},
-	)
-
-	add_input = |World.(world), system| World.({ ..world, inputs: world.inputs.append(system) })
-	add_system = |World.(world), system| World.({ ..world, updates: world.updates.append(system) })
-	add_render = |World.(world), system| World.({ ..world, renders: world.renders.append(system) })
-
-	input! : World, App.Input(Msg) => Try(World, [])
-	input! = |w, io| {
-		var $world = w
-		for input in w.inputs {
-			$world = input($world, io)?
-		}
-		Ok($world)
-	}
-
-	update : World -> World
-	update = |w| w.updates.fold(w, |world, system| system(world))
-
-	render! : World, Draw.Frame => Try({}, [Exit(I64)])
-	render! = |w, frame| {
-		for r in w.renders {
-			r(w, frame)?
-		}
-		Ok({})
-	}
-
-	spawn_empty : World -> (World, Entity)
-	spawn_empty = |world| {
-		match world.unused.last() {
-			Err(ListWasEmpty) => {
-				Store.(entities) = world.entities
-				ent = entities.len()
-				entity = Entity.(EntityId.(ent.to_u32_wrap()), GenerationId.(0))
-				World.(w) = world
-				(
-					World.(
-						{
-							..w,
-							entities: world.entities.insert(entity, {}).map_err(|_| crash "Entity should exist").collapse(),
-						},
-					),
-					entity,
-				)
-			}
-			Ok(ent) => {
-				len = world.unused.len()
-				unused = world.unused.take_first(len - 1)
-				n_ent = ent.inc_gen()
-				World.(w) = world
-				(
-					World.(
-						{
-							..w,
-							unused: unused,
-						},
-					),
-					n_ent,
-				)
-			}
-		}
-	}
-
-	spawn : World(s), c -> (World(s), Entity)
-		where [
-			c.from_world : s -> Store(c),
-			c.to_world : s, Store(c) -> s,
-		]
-	spawn = |world, component| {
-		(world1, entity) = world.spawn_empty()
-		C : c
-		store = C.from_world(world.components).insert(entity, component).map_err(|_| crash "Entity should exist").collapse()
-		(World.with_store(world1, store), entity)
-	}
-
-	spawn2 : World(s), c1, c2 -> (World(s), Entity)
-		where [
-			c1.from_world : s -> Store(c1),
-			c1.to_world : s, Store(c1) -> s,
-			c2.from_world : s -> Store(c2),
-			c2.to_world : s, Store(c2) -> s,
-		]
-	spawn2 = |world, component1, component2| {
-		(world1, entity) = world.spawn_empty()
-		C1 : c1
-		C2 : c2
-		store1 = C1.from_world(world1.components).insert(entity, component1).map_err(|_| crash "Entity that was just created doesn't exist").collapse()
-		store2 = C2.from_world(world1.components).insert(entity, component2).map_err(|_| crash "Entity that was just created doesn't exist").collapse()
-
-		(World.with_store(World.with_store(world1, store1), store2), entity)
-	}
-
-	spawn3 : World(s), c1, c2, c3 -> (World(s), Entity)
-		where [
-			c1.from_world : s -> Store(c1),
-			c1.to_world : s, Store(c1) -> s,
-			c2.from_world : s -> Store(c2),
-			c2.to_world : s, Store(c2) -> s,
-			c3.from_world : s -> Store(c3),
-			c3.to_world : s, Store(c3) -> s,
-		]
-	spawn3 = |world, component1, component2, component3| {
-		(world1, entity) = world.spawn_empty()
-		C1 : c1
-		C2 : c2
-		C3 : c3
-		store1 = C1.from_world(world1.components).insert(entity, component1).map_err(|_| crash "Entity that was just created doesn't exist").collapse()
-		store2 = C2.from_world(world1.components).insert(entity, component2).map_err(|_| crash "Entity that was just created doesn't exist").collapse()
-		store3 = C3.from_world(world1.components).insert(entity, component3).map_err(|_| crash "Entity that was just created doesn't exist").collapse()
-
-		(World.with_store(World.with_store(World.with_store(world1, store1), store2), store3), entity)
-	}
-
-	map_store : World, (Store(c) -> Store(c)) -> World
-		where [
-			c.from_world : s -> Store(c),
-			c.to_world : s, Store(c) -> s,
-		]
-	map_store = |World.(world), map| {
-		C : c
-		World.(
-			{
-				..world,
-				components: C.to_world(world.components, map(C.from_world(world.components))),
-			},
-		)
-	}
-
-	map_comp : World, (c -> c) -> World
-		where [
-			c.from_world : s -> Store(c),
-			c.to_world : s, Store(c) -> s,
-		]
-	map_comp = |world, fn| {
-		C : c
-		world.with_store(C.from_world(world.components).map(fn))
-	}
-
-	## Allows data to move between to different Components
-	##
-	## Filtering is done from right to left, so prefer putting smaller components with fewer entities on the right
-	map_comp2 : World, (c, d -> (c, d)) -> World
-		where [
-			c.from_world : s -> Store(c),
-			c.to_world : s, Store(c) -> s,
-			d.from_world : s -> Store(d),
-			d.to_world : s, Store(d) -> s,
-		]
-	map_comp2 = |world, fn| {
-		C : c
-		D : d
-		Store.(store_c) = C.from_world(world.components)
-		Store.(store_d) = D.from_world(world.components)
-		(new_c, new_d) = store_d.fold(
-			(store_c, store_d),
-			|(acc_c, acc_d), ent, (gen_d, comp_d)| match store_c.get(ent) {
-				Ok((gen_c, comp_c)) if gen_c == gen_d => {
-					(out_c, out_d) = fn(comp_c, comp_d)
-					(acc_c.insert(ent, (gen_c, out_c)), acc_d.insert(ent, (gen_d, out_d)))
-				}
-				_ => (acc_c, acc_d)
-			},
-		)
-		world.with_store(Store.(new_d)).with_store(Store.(new_c))
-	}
-
-	## Read-only counterpart to `map_comp2`: every entity that has both components
-	##
-	## Filtering is done from right to left, so prefer putting smaller components with fewer entities on the right
-	query2 : World -> List((Entity, c, d))
-		where [
-			c.from_world : s -> Store(c),
-			d.from_world : s -> Store(d),
-		]
-	query2 = |world| {
-		C : c
-		D : d
-		store_c = C.from_world(world.components)
-		D.from_world(world.components).iter().fold(
-			[],
-			|acc, (ent, comp_d)| match store_c.get(ent) {
-				Ok(comp_c) => acc.append((ent, comp_c, comp_d))
-				Err(_) => acc
-			},
-		)
-	}
-
-	with_store : World, Store(c) -> World
-		where [
-			c.to_world : s, Store(c) -> s,
-		]
-	with_store = |World.(w), components| {
-		C : c
-		World.({ ..w, components: C.to_world(w.components, components) })
-	}
-
-	get_store : World -> Store(c)
-		where [
-			c.from_world : s -> Store(c),
-		]
-	get_store = |World.(w)| {
-		C : c
-		C.from_world(w.components)
-	}
-}
-
-Store(a) := Dict(EntityId, (GenerationId, a)).{
-	empty = || Store.(Dict.empty())
-
-	## TODO: Check the generation of the entity
-	insert : Store, Entity, a -> Try(Store, [])
-	insert = |Store.(store), Entity.(ent, gen), comp| Ok(Store.(store.insert(ent, (gen, comp))))
-
-	map = |Store.(store), fn| Store.(Dict.map(store, |_ent, (gen, v)| (gen, fn(v))))
-
-	get : Store, Entity -> Try(a, _)
-	get = |Store.(store), Entity.(ent, gen)| {
-		(stored_gen, stored_comp) = store.get(ent) ? |_| EntityNotFound
-		if gen == stored_gen {
-			Ok(stored_comp)
-		} else {
-			Err(EntityExpired)
-		}
-	}
-
-	iter : Store -> Iter((Entity, a))
-	iter = |Store.(s)| Dict.iter(s).map(|(ent_id, (gen, comp))| (Entity.(ent_id, gen), comp))
-}
-
-EntityId := U32.{
-	is_eq : _
-	to_hash : _
-}
-
-GenerationId := U32.{
-	is_eq : _
-}
-
-Entity := (EntityId, GenerationId).{
-	inc_gen = |Entity.(ent, GenerationId.(gen))| Entity.(ent, GenerationId.(gen + 1))
-}
-
-Center := Math.Vec2.{
-	comp = || Center
-}
-
-Time := {
-	dt : F32,
-	total : F32,
-}.{
-	from_world : { time : Store(Time), .. } -> Store(Time)
-	from_world = |storage| storage.time
-
-	to_world : { time : Store(Time), ..r }, Store(Time) -> { time : Store(Time), ..r }
-	to_world = |storage, store| {
-		{ ..storage, time: store }
-	}
-}
-
-Pos := { x : F32, y : F32 }.{
-	from_world : { pos : Store(Pos), .. } -> Store(Pos)
-	from_world = |storage| storage.pos
-
-	to_world : { pos : Store(Pos), ..r }, Store(Pos) -> { pos : Store(Pos), ..r }
-	to_world = |storage, store| {
-		{ ..storage, pos: store }
-	}
-}
-
-Pointer := {}.{
-	from_world : { pointer : Store(Pointer), .. } -> Store(Pointer)
-	from_world = |storage| storage.pointer
-
-	to_world : { pointer : Store(Pointer), ..r }, Store(Pointer) -> { pointer : Store(Pointer), ..r }
-	to_world = |storage, store| {
-		{ ..storage, pointer: store }
-	}
-}
-
-Radius := F32.{
-	from_world : { radius : Store(Radius), .. } -> Store(Radius)
-	from_world = |storage| storage.radius
-
-	to_world : { radius : Store(Radius), ..r }, Store(Radius) -> { radius : Store(Radius), ..r }
-	to_world = |storage, store| {
-		{ ..storage, radius: store }
-	}
-}
-
-Components := [Center, Unused]
