@@ -67,7 +67,7 @@ match world.single() {
 
 ```roc
 # annotate the result first (what main.roc does)
-found : Try(Pointer, _)
+found : Try(Pointer(_), _)
 found = world.single()
 
 # or call the function by its qualified name instead of as a method
@@ -79,26 +79,13 @@ match world.single() {
 This one is how static dispatch is specified rather than a bug, so it is
 unlikely to change.
 
-## 3. `roc check` on a module that imports the platform reports no errors
+## 3. Platform imports belonged to the app
 
-**What fails.** `RayEcs.roc` imports `rr.App`, `rr.Draw` and so on, but the
-`rr` shorthand is only defined by an app header. Checked on its own:
-
-- `roc check RayEcs.roc` prints `No errors found`, whatever the file contains.
-- `roc test RayEcs.roc` shows what is actually going on: `This Input type is
-  declared to be in rr.App, which does not exist`, followed by dozens of
-  errors that follow from it.
-
-**Workaround.** Never check or test `RayEcs.roc` directly. Go through the app,
-which also runs the tests of every module it imports:
-
-```sh
-roc check main.roc
-roc test main.roc
-```
-
-**Recheck.** Introduce a deliberate type error in `RayEcs.roc` and run
-`roc check RayEcs.roc`. If it is reported, the module can be checked alone.
+Previously, `RayEcs.roc` imported `rr` modules even though only the app defined
+that shorthand. Checking the module alone could misleadingly report success.
+The package now has no platform imports: the app supplies device snapshots and
+a drawing callback. Check and test it directly with
+`roc check package/RayEcs.roc` and `roc test package/RayEcs.roc`.
 
 ## 4. Effectful functions cannot be called from `expect`
 
@@ -120,7 +107,7 @@ only exercised by running the app.
 
 ## 5. Methods are found on the underlying type, not on an alias
 
-**What fails.** `RayEcs.World(col, msg, e)` is an alias for `Ecs.IOWorld(...)`.
+**What fails.** `RayEcs.World(col, input, frame, e)` is an alias for `Ecs.IOWorld(...)`.
 Method syntax looks methods up on `IOWorld`, so a function defined in
 `RayEcs` cannot be chained onto a world, and a qualified call in a chain does
 not parse:

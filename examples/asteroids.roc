@@ -1,4 +1,7 @@
-app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst" }
+app [Model, program] {
+	rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst",
+	ecs: "../package/main.roc",
+}
 
 import rr.App
 import rr.Color
@@ -6,12 +9,12 @@ import rr.Devices
 import rr.Draw
 import rr.Random
 import rr.Text
-import Ecs
-import RayEcs exposing [Keyboard, Clock, Layer, Position, Size, Radius, FillColor, Gradient, Label, TextColor, TextAlign, FpsCounter]
+import ecs.Ecs
+import ecs.RayEcs exposing [Clock, FillColor, FpsCounter, Gradient, Keyboard, Label, Layer, Position, Radius, Size, TextAlign, TextColor]
 
 ## Everything on screen is an entity in the world: `RayEcs` reads the devices
 ## into it on every update and draws it on every render.
-Model(c) : { world : RayEcs.World(c, Msg, []) }
+Model(c) : { world : RayEcs.World(c, App.Input(Msg), Draw.Frame, [Exit(I64)]) }
 
 ## Nothing here waits, so there is no task to spawn and no message to fold in.
 Msg : []
@@ -41,6 +44,7 @@ init! = App.init(
 					.add_system(next_wave)
 					.add_system(blink)
 					.add_system(hud),
+				{ devices: Devices.none, draw!: draw_command! },
 			).add_input(quit_on_escape).add_output(draw_outlines!),
 		})
 	},
@@ -373,7 +377,7 @@ seconds = |world| {
 }
 
 held = |world, key| {
-	found : Try(Keyboard, _)
+	found : Try(Keyboard(_), _)
 	found = world.single()
 	match found {
 		Ok(keyboard) => keyboard.down(key)
@@ -382,7 +386,7 @@ held = |world, key| {
 }
 
 pressed = |world, key| {
-	found : Try(Keyboard, _)
+	found : Try(Keyboard(_), _)
 	found = world.single()
 	match found {
 		Ok(keyboard) => keyboard.pressed(key)
@@ -516,7 +520,7 @@ Hud := [Score, Lives, Banner].{
 # Tests
 
 ## A world as it is after `init!`, before the first update.
-fresh = || RayEcs.spawn_devices(scene(Text.font_stub, Random.seed(7)))
+fresh = || RayEcs.spawn_devices(scene(Text.font_stub, Random.seed(7)), Devices.none)
 
 ## One update's worth of input: `seconds` long, with these keys held.
 tick = |world, dt, keys| {
@@ -542,8 +546,8 @@ lives = |world| match world.single() {
 
 sizes = |world| rocks(world).map(|rock| rock.size)
 
-# `RayEcs` draws the backdrop and the four labels; the ship is an outline.
-expect RayEcs.scene(fresh()).len() == 5 and outlines(fresh()).len() == 1
+# `RayEcs` draws the backdrop, four labels and FPS; the ship is an outline.
+expect RayEcs.scene(fresh()).len() == 6 and outlines(fresh()).len() == 1
 
 # The first wave is four large rocks, none of them on top of the ship.
 expect {
@@ -609,4 +613,19 @@ expect {
 	again = hud(restart(RayEcs.write_devices(over, input)))
 	ships(over) == [] and banner(over) == ["GAME OVER  -  Enter plays again"] and next_wave(over).len() == over.len()
 		and ships(again).len() == 1 and lives(again) == 3 and score(again) == 0 and sizes(again) == [] and banner(again) == [""]
+}
+
+# Platform adapter: the package only produces commands.
+draw_command! = |frame, command| {
+	match command {
+		GradientV(rect) => frame.rectangle_gradient_v!(rect)
+		GradientH(rect) => frame.rectangle_gradient_h!(rect)
+		CircleGradient(circle) => frame.circle_gradient!(circle)
+		Rectangle(rect) => frame.rectangle!(rect)
+		RoundedRectangle(rect) => frame.rounded_rectangle!(rect)
+		Circle(circle) => frame.circle!(circle)
+		Text(text) => Text.from(text.text, text.font).size(text.size).draw!(frame, { pos: text.pos, color: text.color, align: text.align })
+		Fps(fps) => frame.fps!(fps)
+	}
+	Ok({})
 }

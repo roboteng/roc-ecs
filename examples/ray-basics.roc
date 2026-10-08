@@ -1,16 +1,19 @@
-app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst" }
+app [Model, program] {
+	rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst",
+	ecs: "../package/main.roc",
+}
 
 import rr.App
 import rr.Color
 import rr.Devices
 import rr.Draw
 import rr.Text
-import Ecs
-import RayEcs exposing [Pointer, Keyboard, Clock, Layer, Position, Size, Radius, CornerRadius, FillColor, BorderColor, BorderWidth, Gradient, RadialGradient, Label, TextColor, TextAlign, FpsCounter]
+import ecs.Ecs
+import ecs.RayEcs exposing [BorderColor, BorderWidth, Clock, CornerRadius, FillColor, FpsCounter, Gradient, Keyboard, Label, Layer, Pointer, Position, RadialGradient, Radius, Size, TextAlign, TextColor]
 
 ## Everything on screen is an entity in the world: `RayEcs` reads the devices
 ## into it on every update and draws it on every render.
-Model(c) : { world : RayEcs.World(c, Msg, []) }
+Model(c) : { world : RayEcs.World(c, App.Input(Msg), Draw.Frame, [Exit(I64)]) }
 
 ## Nothing here waits, so there is no task to spawn and no message to fold in.
 ## An app that reads a file or fetches a URL gives `Msg` the variants those
@@ -34,6 +37,7 @@ init! = App.init(
 					.add_system(follow_pointer)
 					.add_system(tint_accents)
 					.add_system(pulse),
+				{ devices: Devices.none, draw!: draw_command! },
 			).add_input(quit_on_escape),
 		})
 	},
@@ -86,7 +90,7 @@ scene = |font| {
 
 ## Ends the app when Escape goes down.
 quit_on_escape = |world, _input| {
-	found : Try(Keyboard, _)
+	found : Try(Keyboard(_), _)
 	found = world.inner.single()
 	match found {
 		Ok(keyboard) if keyboard.pressed(KeyEscape) => Err(Exit(0))
@@ -96,7 +100,7 @@ quit_on_escape = |world, _input| {
 
 ## Keeps every `Follower` under the pointer.
 follow_pointer = |world| {
-	found : Try(Pointer, _)
+	found : Try(Pointer(_), _)
 	found = world.single()
 	match found {
 		Ok(pointer) => world.map_with(|_position, Follower.(_)| Position.(pointer.position()))
@@ -106,7 +110,7 @@ follow_pointer = |world| {
 
 ## Recolors every `Accent`: red while the left button is held, blue otherwise.
 tint_accents = |world| {
-	found : Try(Pointer, _)
+	found : Try(Pointer(_), _)
 	found = world.single()
 	match found {
 		Ok(pointer) => {
@@ -188,9 +192,41 @@ expect drawn(scene(Text.font_stub)) == ["gradient", "glow", "glow", "fps", "roun
 # Holding the left button turns every accent red, at the alpha it asked for.
 expect {
 	held = App.Input.for_tests({}).with_devices(Devices.none.with_mouse_position({ x: 30, y: 40 }).with_mouse_button_down(Left))
-	world = tint_accents(follow_pointer(RayEcs.write_devices(RayEcs.spawn_devices(scene(Text.font_stub)), held)))
+	world = tint_accents(follow_pointer(RayEcs.write_devices(RayEcs.spawn_devices(scene(Text.font_stub), Devices.none), held)))
 	fills = world.select().having(Accent.to_col).query1().map(|(_, fill)| FillColor.get(fill))
 	followers = world.select().having(Follower.to_col).query1().map(|(_, position)| Position.get(position))
 	fills == [Color.with_alpha(red, 170), Color.with_alpha(red, 40), Color.with_alpha(red, 255)]
 		and followers == [{ x: 30, y: 40 }, { x: 30, y: 40 }, { x: 30, y: 40 }]
+}
+
+# Platform adapter: the package only produces commands.
+draw_command! = |frame, command| {
+	match command {
+		GradientV(rect) => frame.rectangle_gradient_v!(rect)
+		GradientH(rect) => frame.rectangle_gradient_h!(rect)
+		CircleGradient(circle) => frame.circle_gradient!(circle)
+		Rectangle(rect) => frame.rectangle!(rect)
+		RoundedRectangle(rect) => frame.rounded_rectangle!(rect)
+		Circle(circle) => frame.circle!(circle)
+		Text(text) => Text.from(text.text, text.font).size(text.size).draw!(frame, { pos: text.pos, color: text.color, align: text.align })
+		Fps(fps) => frame.fps!(fps)
+	}
+	Ok({})
+}
+
+expect {
+	input : App.Input([])
+	input = App.Input.for_tests({})
+		.with_devices(Devices.none.with_mouse_position({ x: 30, y: 40 }).with_mouse_button_pressed(Left).with_key_down(KeySpace))
+		.with_time({ cycle_count: 1, simulation_nanos: 0, monotonic_nanos: 0, elapsed_seconds: 0.5 })
+	world = RayEcs.write_devices(RayEcs.write_devices(RayEcs.spawn_devices(Ecs.World.empty(), Devices.none), input), input)
+	pointer : RayEcs.Pointer(_)
+	pointer = world.single()?
+	keyboard : RayEcs.Keyboard(_)
+	keyboard = world.single()?
+	clock = RayEcs.Clock.get(world.single()?)
+	pointer.position() == { x: 30, y: 40 }
+		and pointer.pressed(Left) and !pointer.down(Right)
+			and keyboard.down(KeySpace) and !keyboard.down(KeyEnter)
+				and clock.dt == 0.5 and clock.total == 1
 }
