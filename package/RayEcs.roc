@@ -1,15 +1,7 @@
-import rr.App
-import rr.Color
-import rr.Devices
-import rr.Draw
-import rr.Keys
-import rr.Mouse
-import rr.Text
 import Ecs
 
-## Runs an `Ecs.IOWorld` on RocRay: its input is the `App.Input` that
-## `update!` receives, and its output is the `Draw.Frame` that `render!` draws
-## through.
+## Host-independent ECS helpers for a RocRay-style scene.
+## The caller supplies device snapshots and a draw-command callback.
 ##
 ## `RayEcs.default` gives a world that already reads the devices and draws
 ## every entity that has the components of a shape:
@@ -17,8 +9,9 @@ import Ecs
 ## ```roc
 ## world = RayEcs.default(
 ##     Ecs.World.empty()
-##         .spawn4(Position.({ x: 20, y: 20 }), Size.({ width: 200, height: 80 }), FillColor.(Color.blue), BorderColor.(Color.white))
+##         .spawn4(Position.({ x: 20, y: 20 }), Size.({ width: 200, height: 80 }), FillColor.(blue), BorderColor.(white))
 ##         .add_system(move),
+##     { devices: Devices.none, draw!: draw_command! },
 ## )
 ##
 ## update! = |model, input, _io| Ok({ ..model, world: RayEcs.update!(model.world, input)? })
@@ -41,35 +34,37 @@ import Ecs
 ## | `Position`, `Radius`, `FillColor`, optionally `BorderColor` | circle |
 ## | `Position`, `Label`, `TextColor`, optionally `TextAlign` | text |
 ## | `Position`, `FpsCounter`, `TextColor` | frame rate |
-RayEcs :: [].{
+RayEcs :: {}.{
 
 	## col -> tag union of the component columns
-	## msg -> the app's task message type
-	## e -> errors a system can stop the app with, on top of `Exit`
-	World(col, msg, e) : Ecs.IOWorld(col, App.Input(msg), Draw.Frame, [Exit(I64), ..e])
+	## input, frame -> the host input and drawing context types
+	## e -> errors returned by the registered systems
+	World(col, input, frame, e) : Ecs.IOWorld(col, input, frame, e)
 
 	## Reads the host's input for this cycle. Runs in `update!`, before the
 	## world's own systems.
-	InputSystem(col, msg, e) : World(col, msg, e), App.Input(msg) => Try(World(col, msg, e), [Exit(I64), ..e])
+	InputSystem(col, input, frame, e) : World(col, input, frame, e), input => Try(World(col, input, frame, e), e)
 
 	## Draws the world. Runs in `render!`, the only place drawing is legal.
-	DrawSystem(col, msg, e) : World(col, msg, e), Draw.Frame => Try({}, [Exit(I64), ..e])
+	DrawSystem(col, input, frame, e) : World(col, input, frame, e), frame => Try({}, e)
 
 	## A world with no input or output systems of its own.
-	new : Ecs.World(col) -> World(col, msg, e)
+	new : Ecs.World(col) -> World(col, input, frame, e)
 	new = |world| Ecs.IOWorld.new(world)
 
-	## A world with a devices entity, kept current by `read_devices`, that
-	## draws its shapes with `draw!`.
-	default = |world| RayEcs.new(RayEcs.spawn_devices(world)).add_input(RayEcs.read_devices).add_output(RayEcs.draw!)
+	## A world with devices and drawing. `host.devices` is the initial snapshot;
+	## `host.draw!` takes a frame and one scene command and returns `Try({}, e)`.
+	default = |world, host| RayEcs.new(RayEcs.spawn_devices(world, host.devices))
+		.add_input(RayEcs.read_devices)
+		.add_output(|w, frame| RayEcs.draw!(w, frame, host.draw!))
 
 	## One `update!` cycle: every input system, then every system of the
 	## inner world.
-	update! : World(col, msg, e), App.Input(msg) => Try(World(col, msg, e), [Exit(I64), ..e])
+	update! : World(col, input, frame, e), input => Try(World(col, input, frame, e), e)
 	update! = |world, input| Ok(world.input!(input)?.update())
 
 	## One `render!`: every output system, in the order they were added.
-	render! : World(col, msg, e), Draw.Frame => Try({}, [Exit(I64), ..e])
+	render! : World(col, input, frame, e), frame => Try({}, e)
 	render! = |world, frame| world.output!(frame)
 
 	# Input
@@ -77,9 +72,9 @@ RayEcs :: [].{
 	## Spawns the entity that holds the `Pointer`, the `Keyboard` and the
 	## `Clock`. Systems read them with `single`:
 	##
-	##     pointer : RayEcs.Pointer
+	##     pointer : RayEcs.Pointer(_)
 	##     pointer = world.single()?
-	spawn_devices = |world| world.spawn3(Pointer.(Devices.none.mouse), Keyboard.(Devices.none), Clock.({ dt: 0, total: 0 }))
+	spawn_devices = |world, devices| world.spawn3(Pointer.(devices.mouse), Keyboard.(devices), Clock.({ dt: 0, total: 0 }))
 
 	## The input system that keeps every `Pointer`, `Keyboard` and `Clock`
 	## current.
@@ -98,18 +93,9 @@ RayEcs :: [].{
 
 	## The output system that draws every shape: lowest `Layer` first, and
 	## within a layer in the order of the table at the top of this module.
-	draw! = |world, frame| {
+	draw! = |world, frame, draw_command!| {
 		for command in RayEcs.scene(world.inner) {
-			match command {
-				GradientV(rect) => frame.rectangle_gradient_v!(rect)
-				GradientH(rect) => frame.rectangle_gradient_h!(rect)
-				CircleGradient(circle) => frame.circle_gradient!(circle)
-				Rectangle(rect) => frame.rectangle!(rect)
-				RoundedRectangle(rect) => frame.rounded_rectangle!(rect)
-				Circle(circle) => frame.circle!(circle)
-				Text(text) => Text.from(text.text, text.font).size(text.size).draw!(frame, { pos: text.pos, color: text.color, align: text.align })
-				Fps(fps) => frame.fps!(fps)
-			}
+			draw_command!(frame, command)?
 		}
 		Ok({})
 	}
@@ -157,7 +143,7 @@ RayEcs :: [].{
 				y: p.y,
 				width: s.width,
 				height: s.height,
-				style: Draw.filled_and_outlined(fill, border, RayEcs.border_width(world, entity)),
+				style: RayEcs.filled_and_outlined(fill, border, RayEcs.border_width(world, entity)),
 			}),
 		),
 	)
@@ -172,7 +158,7 @@ RayEcs :: [].{
 				height: s.height,
 				radius: radius,
 				segments: 12,
-				style: Draw.filled_and_outlined(fill, border, RayEcs.border_width(world, entity)),
+				style: RayEcs.filled_and_outlined(fill, border, RayEcs.border_width(world, entity)),
 			}),
 		),
 	)
@@ -181,7 +167,7 @@ RayEcs :: [].{
 		plain = world.select().without(BorderColor.to_col).query3().map(
 			|(entity, Position.(p), Radius.(radius), FillColor.(fill))| (
 				RayEcs.layer_of(world, entity),
-				Circle({ center: { x: p.x, y: p.y }, radius: radius, style: Draw.filled(fill) }),
+				Circle({ center: { x: p.x, y: p.y }, radius: radius, style: RayEcs.filled(fill) }),
 			),
 		)
 		bordered = world.query4().map(
@@ -190,7 +176,7 @@ RayEcs :: [].{
 				Circle({
 					center: { x: p.x, y: p.y },
 					radius: radius,
-					style: Draw.filled_and_outlined(fill, border, RayEcs.border_width(world, entity)),
+					style: RayEcs.filled_and_outlined(fill, border, RayEcs.border_width(world, entity)),
 				}),
 			),
 		)
@@ -231,6 +217,13 @@ RayEcs :: [].{
 		Err(_) => 1
 	}
 
+	filled = |color| { fill: Fill(color), stroke: NoStroke }
+
+	filled_and_outlined = |fill, border, width| {
+		fill: Fill(fill),
+		stroke: Stroke({ color: border, thickness: width }),
+	}
+
 	# Components
 	#
 	# A nominal type can only be taken apart with `Name.(inner)` in the module
@@ -239,11 +232,11 @@ RayEcs :: [].{
 
 	## The mouse as of the latest `update!`. Kept current by `read_devices` on
 	## every entity that has one; `spawn_devices` makes the usual single one.
-	Pointer := Mouse.Snapshot.{
-		get : Pointer -> Mouse.Snapshot
+	Pointer(mouse) := mouse.{
+		get : Pointer(mouse) -> mouse
 		get = |Pointer.(inner)| inner
 
-		to_col : List(Pointer) -> [Pointers(List(Pointer))]
+		to_col : List(Pointer(mouse)) -> [Pointers(List(Pointer(mouse)))]
 		to_col = |list| Pointers(list)
 
 		from_col = |col| match col {
@@ -251,35 +244,29 @@ RayEcs :: [].{
 			_ => Err(WrongColumn)
 		}
 
-		position : Pointer -> { x : F32, y : F32 }
 		position = |Pointer.(mouse)| mouse.position()
 
 		## Movement since the previous cycle.
-		delta : Pointer -> { x : F32, y : F32 }
 		delta = |Pointer.(mouse)| mouse.delta()
 
-		wheel : Pointer -> { x : F32, y : F32 }
 		wheel = |Pointer.(mouse)| mouse.wheel_delta()
 
 		## Held right now.
-		down : Pointer, Mouse.Button -> Bool
 		down = |Pointer.(mouse), button| mouse.button_down(button)
 
 		## Went down this cycle.
-		pressed : Pointer, Mouse.Button -> Bool
 		pressed = |Pointer.(mouse), button| mouse.button_pressed(button)
 
 		## Went up this cycle.
-		released : Pointer, Mouse.Button -> Bool
 		released = |Pointer.(mouse), button| mouse.button_released(button)
 	}
 
 	## The keys as of the latest `update!`. Kept current by `read_devices`.
-	Keyboard := Devices.Snapshot.{
-		get : Keyboard -> Devices.Snapshot
+	Keyboard(devices) := devices.{
+		get : Keyboard(devices) -> devices
 		get = |Keyboard.(inner)| inner
 
-		to_col : List(Keyboard) -> [Keyboards(List(Keyboard))]
+		to_col : List(Keyboard(devices)) -> [Keyboards(List(Keyboard(devices)))]
 		to_col = |list| Keyboards(list)
 
 		from_col = |col| match col {
@@ -288,15 +275,12 @@ RayEcs :: [].{
 		}
 
 		## Held right now.
-		down : Keyboard, Keys.Key -> Bool
 		down = |Keyboard.(devices), key| devices.key_down(key)
 
 		## Went down this cycle.
-		pressed : Keyboard, Keys.Key -> Bool
 		pressed = |Keyboard.(devices), key| devices.key_pressed(key)
 
 		## Went up this cycle.
-		released : Keyboard, Keys.Key -> Bool
 		released = |Keyboard.(devices), key| devices.key_released(key)
 	}
 
@@ -332,11 +316,11 @@ RayEcs :: [].{
 
 	## With a `Position` and a `Radius`, draws a circle that fades from its
 	## center to its edge.
-	RadialGradient := { inner : Color.Rgba, outer : Color.Rgba }.{
-		get : RadialGradient -> { inner : Color.Rgba, outer : Color.Rgba }
+	RadialGradient(color) := { inner : color, outer : color }.{
+		get : RadialGradient(color) -> { inner : color, outer : color }
 		get = |RadialGradient.(inner)| inner
 
-		to_col : List(RadialGradient) -> [RadialGradients(List(RadialGradient))]
+		to_col : List(RadialGradient(color)) -> [RadialGradients(List(RadialGradient(color)))]
 		to_col = |list| RadialGradients(list)
 
 		from_col = |col| match col {
@@ -347,8 +331,8 @@ RayEcs :: [].{
 
 	## Optional: which point of a `Label` its `Position` names. Without one it
 	## is the top left corner.
-	TextAlign := (Text.VAlign, Text.HAlign).{
-		get : TextAlign -> (Text.VAlign, Text.HAlign)
+	TextAlign := ([Top, Middle, Bottom], [Left, Center, Right]).{
+		get : TextAlign -> ([Top, Middle, Bottom], [Left, Center, Right])
 		get = |TextAlign.(inner)| inner
 
 		to_col : List(TextAlign) -> [TextAligns(List(TextAlign))]
@@ -432,11 +416,11 @@ RayEcs :: [].{
 		}
 	}
 
-	FillColor := Color.Rgba.{
-		get : FillColor -> Color.Rgba
+	FillColor(color) := color.{
+		get : FillColor(color) -> color
 		get = |FillColor.(inner)| inner
 
-		to_col : List(FillColor) -> [FillColors(List(FillColor))]
+		to_col : List(FillColor(color)) -> [FillColors(List(FillColor(color)))]
 		to_col = |list| FillColors(list)
 
 		from_col = |col| match col {
@@ -445,11 +429,11 @@ RayEcs :: [].{
 		}
 	}
 
-	BorderColor := Color.Rgba.{
-		get : BorderColor -> Color.Rgba
+	BorderColor(color) := color.{
+		get : BorderColor(color) -> color
 		get = |BorderColor.(inner)| inner
 
-		to_col : List(BorderColor) -> [BorderColors(List(BorderColor))]
+		to_col : List(BorderColor(color)) -> [BorderColors(List(BorderColor(color)))]
 		to_col = |list| BorderColors(list)
 
 		from_col = |col| match col {
@@ -473,11 +457,11 @@ RayEcs :: [].{
 	}
 
 	## With a `Position` and a `Size`, draws a gradient rectangle.
-	Gradient := [TopToBottom(Color.Rgba, Color.Rgba), LeftToRight(Color.Rgba, Color.Rgba)].{
-		get : Gradient -> [TopToBottom(Color.Rgba, Color.Rgba), LeftToRight(Color.Rgba, Color.Rgba)]
+	Gradient(color) := [TopToBottom(color, color), LeftToRight(color, color)].{
+		get : Gradient(color) -> [TopToBottom(color, color), LeftToRight(color, color)]
 		get = |Gradient.(inner)| inner
 
-		to_col : List(Gradient) -> [Gradients(List(Gradient))]
+		to_col : List(Gradient(color)) -> [Gradients(List(Gradient(color)))]
 		to_col = |list| Gradients(list)
 
 		from_col = |col| match col {
@@ -488,11 +472,11 @@ RayEcs :: [].{
 
 	## With a `Position` and a `TextColor`, draws text. `Draw.default_font!()`
 	## gives a font to start with.
-	Label := { text : Str, size : F32, font : Text.Font }.{
-		get : Label -> { text : Str, size : F32, font : Text.Font }
+	Label(font) := { text : Str, size : F32, font : font }.{
+		get : Label(font) -> { text : Str, size : F32, font : font }
 		get = |Label.(inner)| inner
 
-		to_col : List(Label) -> [Labels(List(Label))]
+		to_col : List(Label(font)) -> [Labels(List(Label(font)))]
 		to_col = |list| Labels(list)
 
 		from_col = |col| match col {
@@ -501,11 +485,11 @@ RayEcs :: [].{
 		}
 	}
 
-	TextColor := Color.Rgba.{
-		get : TextColor -> Color.Rgba
+	TextColor(color) := color.{
+		get : TextColor(color) -> color
 		get = |TextColor.(inner)| inner
 
-		to_col : List(TextColor) -> [TextColors(List(TextColor))]
+		to_col : List(TextColor(color)) -> [TextColors(List(TextColor(color)))]
 		to_col = |list| TextColors(list)
 
 		from_col = |col| match col {
@@ -515,15 +499,21 @@ RayEcs :: [].{
 	}
 }
 
-# Tests
+# Tests: plain values deliberately require no platform.
+
+blue = { r: 0.U8, g: 121.U8, b: 241.U8, a: 255.U8 }
+
+white = { r: 255.U8, g: 255.U8, b: 255.U8, a: 255.U8 }
+
+red = { r: 230.U8, g: 41.U8, b: 55.U8, a: 255.U8 }
 
 at = |x, y| RayEcs.Position.({ x: x, y: y })
 
 sized = |width, height| RayEcs.Size.({ width: width, height: height })
 
-fill = RayEcs.FillColor.(Color.blue)
+fill = RayEcs.FillColor.(blue)
 
-border = RayEcs.BorderColor.(Color.white)
+border = RayEcs.BorderColor.(white)
 
 ## Two boxes, a rounded box, and a box with no border.
 boxes = || Ecs.World.empty()
@@ -535,12 +525,12 @@ boxes = || Ecs.World.empty()
 # A rectangle needs all four components and no corner radius. Its border is 1
 # thick unless it has a `BorderWidth`.
 expect RayEcs.rectangles(boxes()) == [
-	(0, Rectangle({ x: 1, y: 1, width: 10, height: 10, style: Draw.filled_and_outlined(Color.blue, Color.white, 1) })),
-	(0, Rectangle({ x: 2, y: 2, width: 20, height: 20, style: Draw.filled_and_outlined(Color.blue, Color.white, 3) })),
+	(0, Rectangle({ x: 1, y: 1, width: 10, height: 10, style: RayEcs.filled_and_outlined(blue, white, 1) })),
+	(0, Rectangle({ x: 2, y: 2, width: 20, height: 20, style: RayEcs.filled_and_outlined(blue, white, 3) })),
 ]
 
 expect RayEcs.rounded_rectangles(boxes()) == [
-	(0, RoundedRectangle({ x: 3, y: 3, width: 30, height: 30, radius: 8, segments: 12, style: Draw.filled_and_outlined(Color.blue, Color.white, 1) })),
+	(0, RoundedRectangle({ x: 3, y: 3, width: 30, height: 30, radius: 8, segments: 12, style: RayEcs.filled_and_outlined(blue, white, 1) })),
 ]
 
 expect {
@@ -549,29 +539,29 @@ expect {
 		.spawn4(at(2, 2), RayEcs.Radius.(6), fill, border)
 		.spawn2(at(3, 3), RayEcs.Radius.(7))
 	RayEcs.circles(world) == [
-		(0, Circle({ center: { x: 1, y: 1 }, radius: 5, style: Draw.filled(Color.blue) })),
-		(0, Circle({ center: { x: 2, y: 2 }, radius: 6, style: Draw.filled_and_outlined(Color.blue, Color.white, 1) })),
+		(0, Circle({ center: { x: 1, y: 1 }, radius: 5, style: RayEcs.filled(blue) })),
+		(0, Circle({ center: { x: 2, y: 2 }, radius: 6, style: RayEcs.filled_and_outlined(blue, white, 1) })),
 	]
 }
 
 expect {
 	world = Ecs.World.empty()
-		.spawn3(at(1, 1), sized(10, 20), RayEcs.Gradient.(TopToBottom(Color.red, Color.blue)))
-		.spawn3(at(2, 2), sized(30, 40), RayEcs.Gradient.(LeftToRight(Color.red, Color.blue)))
-		.spawn3(at(3, 3), RayEcs.Radius.(9), RayEcs.RadialGradient.({ inner: Color.red, outer: Color.blue }))
+		.spawn3(at(1, 1), sized(10, 20), RayEcs.Gradient.(TopToBottom(red, blue)))
+		.spawn3(at(2, 2), sized(30, 40), RayEcs.Gradient.(LeftToRight(red, blue)))
+		.spawn3(at(3, 3), RayEcs.Radius.(9), RayEcs.RadialGradient.({ inner: red, outer: blue }))
 	RayEcs.gradients(world) == [
-		(0, GradientV({ x: 1, y: 1, width: 10, height: 20, color_top: Color.red, color_bottom: Color.blue })),
-		(0, GradientH({ x: 2, y: 2, width: 30, height: 40, color_left: Color.red, color_right: Color.blue })),
+		(0, GradientV({ x: 1, y: 1, width: 10, height: 20, color_top: red, color_bottom: blue })),
+		(0, GradientH({ x: 2, y: 2, width: 30, height: 40, color_left: red, color_right: blue })),
 	]
-		and RayEcs.circle_gradients(world) == [(0, CircleGradient({ center: { x: 3, y: 3 }, radius: 9, color_inner: Color.red, color_outer: Color.blue }))]
+		and RayEcs.circle_gradients(world) == [(0, CircleGradient({ center: { x: 3, y: 3 }, radius: 9, color_inner: red, color_outer: blue }))]
 }
 
 # A label is anchored at its top left corner unless it has a `TextAlign`.
 expect {
-	label = |text| RayEcs.Label.({ text: text, size: 20, font: Text.font_stub })
+	label = |text| RayEcs.Label.({ text: text, size: 20, font: {} })
 	world = Ecs.World.empty()
-		.spawn3(at(1, 1), label("hi"), RayEcs.TextColor.(Color.white))
-		.spawn4(at(2, 2), label("centered"), RayEcs.TextColor.(Color.white), RayEcs.TextAlign.((Middle, Center)))
+		.spawn3(at(1, 1), label("hi"), RayEcs.TextColor.(white))
+		.spawn4(at(2, 2), label("centered"), RayEcs.TextColor.(white), RayEcs.TextAlign.((Middle, Center)))
 		.spawn2(at(3, 3), label("no color"))
 	RayEcs.labels(world).map(
 		|(_, command)| match command {
@@ -582,8 +572,8 @@ expect {
 }
 
 expect {
-	world = Ecs.World.empty().spawn3(at(1, 1), RayEcs.FpsCounter.(32), RayEcs.TextColor.(Color.white))
-	RayEcs.fps_counters(world) == [(0, Fps({ pos: { x: 1, y: 1 }, size: 32, color: Color.white }))]
+	world = Ecs.World.empty().spawn3(at(1, 1), RayEcs.FpsCounter.(32), RayEcs.TextColor.(white))
+	RayEcs.fps_counters(world) == [(0, Fps({ pos: { x: 1, y: 1 }, size: 32, color: white }))]
 }
 
 # Layers decide the order across kinds of shape; within a layer a rectangle is
@@ -605,19 +595,13 @@ expect {
 		== [5, 4, 2, 1, 3]
 }
 
+# Device updates also work with plain host records, without any platform types.
 expect {
-	input : App.Input([])
-	input = App.Input.for_tests({})
-		.with_devices(Devices.none.with_mouse_position({ x: 30, y: 40 }).with_mouse_button_pressed(Left).with_key_down(KeySpace))
-		.with_time({ cycle_count: 1, simulation_nanos: 0, monotonic_nanos: 0, elapsed_seconds: 0.5 })
-	world = RayEcs.write_devices(RayEcs.write_devices(RayEcs.spawn_devices(Ecs.World.empty()), input), input)
-	pointer : RayEcs.Pointer
-	pointer = world.single()?
-	keyboard : RayEcs.Keyboard
-	keyboard = world.single()?
-	RayEcs.Clock.(clock) = world.single()?
-	pointer.position() == { x: 30, y: 40 }
-		and pointer.pressed(Left) and !pointer.down(Right)
-			and keyboard.down(KeySpace) and !keyboard.down(KeyEnter)
-				and clock.dt == 0.5 and clock.total == 1
+	devices = { mouse: { x: 30, y: 40 }, keys: [Space] }
+	input = { devices: devices, time: { elapsed_seconds: 0.5 } }
+	world = RayEcs.spawn_devices(Ecs.World.empty(), { mouse: { x: 0, y: 0 }, keys: [] })
+	updated = RayEcs.write_devices(RayEcs.write_devices(world, input), input)
+	RayEcs.Pointer.get(updated.single()?) == devices.mouse
+		and RayEcs.Keyboard.get(updated.single()?) == devices
+			and RayEcs.Clock.get(updated.single()?) == { dt: 0.5, total: 1 }
 }
