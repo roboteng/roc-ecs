@@ -7,7 +7,7 @@ import rr.Draw
 import rr.Random
 import rr.Text
 import Ecs
-import RayEcs exposing [Keyboard, Clock, Layer, Position, Size, Radius, FillColor, Gradient, Label, TextColor, TextAlign]
+import RayEcs exposing [Keyboard, Clock, Layer, Position, Size, Radius, FillColor, Gradient, Label, TextColor, TextAlign, FpsCounter]
 
 ## Everything on screen is an entity in the world: `RayEcs` reads the devices
 ## into it on every update and draws it on every render.
@@ -117,7 +117,8 @@ scene = |font, seed| spawn_ship(
 		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(16, 12)).add(Label.({ text: "", size: 24, font: font })).add(TextColor.(Color.white)).add(Hud.(Score))).0
 		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(784, 12)).add(Label.({ text: "", size: 24, font: font })).add(TextColor.(Color.white)).add(TextAlign.((Top, Right))).add(Hud.(Lives))).0
 		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(400, 300)).add(Label.({ text: "", size: 30, font: font })).add(TextColor.(Color.white)).add(TextAlign.((Middle, Center))).add(Hud.(Banner))).0
-		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(400, 588)).add(Label.({ text: "A and D steer, W thrusts  -  Space fires  -  ESC exits", size: 16, font: font })).add(TextColor.(Color.from_hex_rgb(0x66708a))).add(TextAlign.((Bottom, Center)))).0,
+		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(400, 588)).add(Label.({ text: "A and D steer, W thrusts  -  Space fires  -  ESC exits", size: 16, font: font })).add(TextColor.(Color.from_hex_rgb(0x66708a))).add(TextAlign.((Bottom, Center)))).0
+		.spawn4(Layer.(2), at(16, height - 32), FpsCounter.(32), TextColor.(Color.white)),
 )
 
 ## A fresh ship in the middle of the screen, pointing up and shielded.
