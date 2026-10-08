@@ -246,7 +246,6 @@ RayEcs :: [].{
 		to_col : List(Pointer) -> [Pointers(List(Pointer))]
 		to_col = |list| Pointers(list)
 
-		from_col : [Pointers(List(Pointer)), ..] -> Try(List(Pointer), [WrongColumn])
 		from_col = |col| match col {
 			Pointers(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -283,7 +282,6 @@ RayEcs :: [].{
 		to_col : List(Keyboard) -> [Keyboards(List(Keyboard))]
 		to_col = |list| Keyboards(list)
 
-		from_col : [Keyboards(List(Keyboard)), ..] -> Try(List(Keyboard), [WrongColumn])
 		from_col = |col| match col {
 			Keyboards(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -311,7 +309,6 @@ RayEcs :: [].{
 		to_col : List(Clock) -> [Clocks(List(Clock))]
 		to_col = |list| Clocks(list)
 
-		from_col : [Clocks(List(Clock)), ..] -> Try(List(Clock), [WrongColumn])
 		from_col = |col| match col {
 			Clocks(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -327,7 +324,6 @@ RayEcs :: [].{
 		to_col : List(Layer) -> [Layers(List(Layer))]
 		to_col = |list| Layers(list)
 
-		from_col : [Layers(List(Layer)), ..] -> Try(List(Layer), [WrongColumn])
 		from_col = |col| match col {
 			Layers(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -343,7 +339,6 @@ RayEcs :: [].{
 		to_col : List(RadialGradient) -> [RadialGradients(List(RadialGradient))]
 		to_col = |list| RadialGradients(list)
 
-		from_col : [RadialGradients(List(RadialGradient)), ..] -> Try(List(RadialGradient), [WrongColumn])
 		from_col = |col| match col {
 			RadialGradients(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -359,7 +354,6 @@ RayEcs :: [].{
 		to_col : List(TextAlign) -> [TextAligns(List(TextAlign))]
 		to_col = |list| TextAligns(list)
 
-		from_col : [TextAligns(List(TextAlign)), ..] -> Try(List(TextAlign), [WrongColumn])
 		from_col = |col| match col {
 			TextAligns(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -375,7 +369,6 @@ RayEcs :: [].{
 		to_col : List(FpsCounter) -> [FpsCounters(List(FpsCounter))]
 		to_col = |list| FpsCounters(list)
 
-		from_col : [FpsCounters(List(FpsCounter)), ..] -> Try(List(FpsCounter), [WrongColumn])
 		from_col = |col| match col {
 			FpsCounters(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -392,7 +385,6 @@ RayEcs :: [].{
 		to_col : List(Position) -> [Positions(List(Position))]
 		to_col = |list| Positions(list)
 
-		from_col : [Positions(List(Position)), ..] -> Try(List(Position), [WrongColumn])
 		from_col = |col| match col {
 			Positions(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -406,7 +398,6 @@ RayEcs :: [].{
 		to_col : List(Size) -> [Sizes(List(Size))]
 		to_col = |list| Sizes(list)
 
-		from_col : [Sizes(List(Size)), ..] -> Try(List(Size), [WrongColumn])
 		from_col = |col| match col {
 			Sizes(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -421,7 +412,6 @@ RayEcs :: [].{
 		to_col : List(Radius) -> [Radii(List(Radius))]
 		to_col = |list| Radii(list)
 
-		from_col : [Radii(List(Radius)), ..] -> Try(List(Radius), [WrongColumn])
 		from_col = |col| match col {
 			Radii(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -436,7 +426,6 @@ RayEcs :: [].{
 		to_col : List(CornerRadius) -> [CornerRadii(List(CornerRadius))]
 		to_col = |list| CornerRadii(list)
 
-		from_col : [CornerRadii(List(CornerRadius)), ..] -> Try(List(CornerRadius), [WrongColumn])
 		from_col = |col| match col {
 			CornerRadii(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -450,7 +439,6 @@ RayEcs :: [].{
 		to_col : List(FillColor) -> [FillColors(List(FillColor))]
 		to_col = |list| FillColors(list)
 
-		from_col : [FillColors(List(FillColor)), ..] -> Try(List(FillColor), [WrongColumn])
 		from_col = |col| match col {
 			FillColors(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -464,7 +452,6 @@ RayEcs :: [].{
 		to_col : List(BorderColor) -> [BorderColors(List(BorderColor))]
 		to_col = |list| BorderColors(list)
 
-		from_col : [BorderColors(List(BorderColor)), ..] -> Try(List(BorderColor), [WrongColumn])
 		from_col = |col| match col {
 			BorderColors(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -479,7 +466,6 @@ RayEcs :: [].{
 		to_col : List(BorderWidth) -> [BorderWidths(List(BorderWidth))]
 		to_col = |list| BorderWidths(list)
 
-		from_col : [BorderWidths(List(BorderWidth)), ..] -> Try(List(BorderWidth), [WrongColumn])
 		from_col = |col| match col {
 			BorderWidths(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -494,7 +480,6 @@ RayEcs :: [].{
 		to_col : List(Gradient) -> [Gradients(List(Gradient))]
 		to_col = |list| Gradients(list)
 
-		from_col : [Gradients(List(Gradient)), ..] -> Try(List(Gradient), [WrongColumn])
 		from_col = |col| match col {
 			Gradients(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -510,7 +495,6 @@ RayEcs :: [].{
 		to_col : List(Label) -> [Labels(List(Label))]
 		to_col = |list| Labels(list)
 
-		from_col : [Labels(List(Label)), ..] -> Try(List(Label), [WrongColumn])
 		from_col = |col| match col {
 			Labels(list) => Ok(list)
 			_ => Err(WrongColumn)
@@ -524,7 +508,6 @@ RayEcs :: [].{
 		to_col : List(TextColor) -> [TextColors(List(TextColor))]
 		to_col = |list| TextColors(list)
 
-		from_col : [TextColors(List(TextColor)), ..] -> Try(List(TextColor), [WrongColumn])
 		from_col = |col| match col {
 			TextColors(list) => Ok(list)
 			_ => Err(WrongColumn)

@@ -139,7 +139,6 @@ Follower := {}.{
 	to_col : List(Follower) -> [Followers(List(Follower))]
 	to_col = |list| Followers(list)
 
-	from_col : [Followers(List(Follower)), ..] -> Try(List(Follower), [WrongColumn])
 	from_col = |col| match col {
 		Followers(list) => Ok(list)
 		_ => Err(WrongColumn)
@@ -151,7 +150,6 @@ Accent := U8.{
 	to_col : List(Accent) -> [Accents(List(Accent))]
 	to_col = |list| Accents(list)
 
-	from_col : [Accents(List(Accent)), ..] -> Try(List(Accent), [WrongColumn])
 	from_col = |col| match col {
 		Accents(list) => Ok(list)
 		_ => Err(WrongColumn)
@@ -163,7 +161,6 @@ Pulse := { base : F32, amount : F32 }.{
 	to_col : List(Pulse) -> [Pulses(List(Pulse))]
 	to_col = |list| Pulses(list)
 
-	from_col : [Pulses(List(Pulse)), ..] -> Try(List(Pulse), [WrongColumn])
 	from_col = |col| match col {
 		Pulses(list) => Ok(list)
 		_ => Err(WrongColumn)

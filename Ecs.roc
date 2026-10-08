@@ -7,7 +7,6 @@
 ##     to_col : List(Pos) -> [Positions(List(Pos))]
 ##     to_col = |list| Positions(list)
 ##
-##     from_col : [Positions(List(Pos)), ..] -> Try(List(Pos), [WrongColumn])
 ##     from_col = |col| match col {
 ##         Positions(list) => Ok(list)
 ##         _ => Err(WrongColumn)
@@ -634,7 +633,6 @@ Pos := { x : I64, y : I64 }.{
 	to_col : List(Pos) -> [Positions(List(Pos))]
 	to_col = |list| Positions(list)
 
-	from_col : [Positions(List(Pos)), ..] -> Try(List(Pos), [WrongColumn])
 	from_col = |col| match col {
 		Positions(list) => Ok(list)
 		_ => Err(WrongColumn)
@@ -647,7 +645,6 @@ Vel := { dx : I64, dy : I64 }.{
 	to_col : List(Vel) -> [Velocities(List(Vel))]
 	to_col = |list| Velocities(list)
 
-	from_col : [Velocities(List(Vel)), ..] -> Try(List(Vel), [WrongColumn])
 	from_col = |col| match col {
 		Velocities(list) => Ok(list)
 		_ => Err(WrongColumn)
@@ -660,7 +657,6 @@ Name := Str.{
 	to_col : List(Name) -> [Names(List(Name))]
 	to_col = |list| Names(list)
 
-	from_col : [Names(List(Name)), ..] -> Try(List(Name), [WrongColumn])
 	from_col = |col| match col {
 		Names(list) => Ok(list)
 		_ => Err(WrongColumn)
@@ -671,7 +667,6 @@ Frozen := {}.{
 	to_col : List(Frozen) -> [Frozens(List(Frozen))]
 	to_col = |list| Frozens(list)
 
-	from_col : [Frozens(List(Frozen)), ..] -> Try(List(Frozen), [WrongColumn])
 	from_col = |col| match col {
 		Frozens(list) => Ok(list)
 		_ => Err(WrongColumn)

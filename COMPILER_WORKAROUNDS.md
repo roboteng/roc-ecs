@@ -137,3 +137,39 @@ Worlds use `IOWorld.add_input` and `IOWorld.add_output` directly, and the
 
 Making `RayEcs.World` its own nominal type would give it methods, at the cost
 of unwrapping it in every system. Like entry 2, this is by design.
+
+## 6. A component with neither method annotated hangs the compiler
+
+**What fails.** A component's `to_col` and `from_col` can each be inferred, but
+not both at once. With `Follower` in `main.roc` as the test case:
+
+| Annotations on `Follower` | Result |
+| --- | --- |
+| both | checks, tests pass |
+| `to_col` only | checks, tests pass |
+| `from_col` only | checks, tests pass |
+| neither | `roc check main.roc` does not finish (stopped after 35s; it normally takes about 4s) |
+
+There is no error message; the compiler just never returns.
+
+**Workaround.** Every component keeps the annotation on `to_col` and leaves
+`from_col` to be inferred, since `from_col`'s is the longer of the two:
+
+```roc
+Follower := {}.{
+    to_col : List(Follower) -> [Followers(List(Follower))]
+    to_col = |list| Followers(list)
+
+    from_col = |col| match col {
+        Followers(list) => Ok(list)
+        _ => Err(WrongColumn)
+    }
+}
+```
+
+If `roc check` ever seems stuck after adding a component, a missing `to_col`
+annotation is the first thing to look for.
+
+**Recheck.** Remove the `to_col` annotation from `Follower` in `main.roc` and
+run `roc check main.roc` with a time limit. If it finishes, both annotations
+are optional.
