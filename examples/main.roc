@@ -1,12 +1,15 @@
-app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst" }
+app [Model, program] {
+	ecs: "../package/main.roc",
+	rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst",
+}
 
 import rr.App
 import rr.Color
 import rr.Devices
 import rr.Draw
 import rr.Text
-import Ecs
-import RayEcs exposing [Pointer, Keyboard, Clock, Layer, Position, Size, Radius, CornerRadius, FillColor, BorderColor, BorderWidth, Gradient, RadialGradient, Label, TextColor, TextAlign, FpsCounter]
+import ecs.Ecs
+import RayEcs exposing [BorderColor, BorderWidth, Clock, CornerRadius, FillColor, FpsCounter, Gradient, Keyboard, Label, Layer, Pointer, Position, RadialGradient, Radius, Size, TextAlign, TextColor]
 
 ## Everything on screen is an entity in the world: `RayEcs` reads the devices
 ## into it on every update and draws it on every render.

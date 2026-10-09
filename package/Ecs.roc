@@ -202,69 +202,6 @@ Ecs :: [].{
 		map_with2 = |world, fn| world.select().map_with2(fn)
 	}
 
-	## A world that talks to the outside.
-	##
-	## col -> tag union of the component columns
-	## i -> input type, how the world gets information from the outside
-	## o -> output type, how the world sends information to the outside
-	## e -> error type
-	IOWorld(col, i, o, e) := {
-		inner : World(col),
-		input_systems : List((IOWorld(col, i, o, e), i => Try(IOWorld(col, i, o, e), e))),
-		output_systems : List((IOWorld(col, i, o, e), o => Try({}, e))),
-	}.{
-		new : World(col) -> IOWorld(col, i, o, e)
-		new = |world| IOWorld.({ inner: world, input_systems: [], output_systems: [] })
-
-		add_input : IOWorld(col, i, o, e), (IOWorld(col, i, o, e), i => Try(IOWorld(col, i, o, e), e)) -> IOWorld(col, i, o, e)
-		add_input = |io_world, system| IOWorld.(
-			{
-				inner: io_world.inner,
-				input_systems: io_world.input_systems.append(system),
-				output_systems: io_world.output_systems,
-			},
-		)
-
-		add_output : IOWorld(col, i, o, e), (IOWorld(col, i, o, e), o => Try({}, e)) -> IOWorld(col, i, o, e)
-		add_output = |io_world, system| IOWorld.(
-			{
-				inner: io_world.inner,
-				input_systems: io_world.input_systems,
-				output_systems: io_world.output_systems.append(system),
-			},
-		)
-
-		## Feeds `input` through every input system, in the order they were
-		## added.
-		input! : IOWorld(col, i, o, e), i => Try(IOWorld(col, i, o, e), e)
-		input! = |io_world, input| {
-			var $world = io_world
-			for system in io_world.input_systems {
-				$world = system($world, input)?
-			}
-			Ok($world)
-		}
-
-		## Runs the inner world's systems once.
-		update : IOWorld(col, i, o, e) -> IOWorld(col, i, o, e)
-		update = |io_world| IOWorld.(
-			{
-				inner: io_world.inner.update(),
-				input_systems: io_world.input_systems,
-				output_systems: io_world.output_systems,
-			},
-		)
-
-		## Runs every output system and collects what they produce.
-		output! : IOWorld(col, i, o, e), o => Try({}, e)
-		output! = |io_world, out| {
-			for system in io_world.output_systems {
-				system(io_world, out)?
-			}
-			Ok({})
-		}
-	}
-
 	## A world narrowed to some of its archetypes.
 	##
 	## The components a query or map asks for already narrow it, so `having` is
@@ -791,13 +728,6 @@ expect {
 	double = |world| world.map1(|Pos.(p)| Pos.({ x: p.x * 2, y: p.y * 2 }))
 	world = sample().add_system(step).add_system(double)
 	positions(world.update()) == [(2, 2), (24, 20), (50, 50), (198, 198)] and positions(world) == positions(sample())
-}
-
-expect {
-	step = |world| world.map_with(|Pos.(p), Vel.(v)| Pos.({ x: p.x + v.dx, y: p.y + v.dy }))
-	io_world : Ecs.IOWorld(_, {}, {}, [])
-	io_world = Ecs.IOWorld.new(sample().add_system(step))
-	positions(io_world.update().update().inner) == [(2, 2), (14, 10), (30, 30), (99, 99)]
 }
 
 # Despawned entities wait in their own list, generation untouched, and the

@@ -1,6 +1,6 @@
 An ECS implementation in Roc.
 
-`roc run Asteroids.roc`
+`roc run examples/asteroids.roc`
 
 ## Goals
 

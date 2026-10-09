@@ -27,7 +27,8 @@ f = |Top.(r)| r.x                        # a module's own top-level type
 **Why it matters here.** `Ecs` picks which component a query or map touches
 from the types of the closure's arguments, and a pattern such as
 `|Pos.(p), Vel.(v)|` is the natural way to state them. That works inside
-`Ecs.roc` and `RayEcs.roc` for their own types, but `main.roc` cannot write
+`Ecs.roc` and `RayEcs.roc` for their own types, but `examples/main.roc` cannot
+write
 `|Position.(p)|` for a `RayEcs` component.
 
 **Workarounds.**
@@ -45,8 +46,8 @@ from the types of the closure's arguments, and a pattern such as
 - Components defined in `main.roc` (`Follower`, `Accent`, `Pulse`) are matched
   with patterns as usual, since they are local.
 
-**Recheck.** Put `f = |RayEcs.Radius.(r)| r` in `main.roc` and run
-`roc check main.roc`. If it passes, the `get` functions and the `_position`
+**Recheck.** Put `f = |RayEcs.Radius.(r)| r` in `examples/main.roc` and run
+`roc check examples/main.roc`. If it passes, the `get` functions and the `_position`
 style arguments can be replaced with patterns.
 
 ## 2. A method cannot be called on a value whose type is not known yet
@@ -79,26 +80,22 @@ match world.single() {
 This one is how static dispatch is specified rather than a bug, so it is
 unlikely to change.
 
-## 3. `roc check` on a module that imports the platform reports no errors
+## 3. `roc check` on a module that imports the platform reported no errors
 
-**What fails.** `RayEcs.roc` imports `rr.App`, `rr.Draw` and so on, but the
-`rr` shorthand is only defined by an app header. Checked on its own:
+**No longer needed.** On `release-safe-fd6625e8`, `roc check RayEcs.roc`
+printed `No errors found` whatever the file contained, because the `rr`
+shorthand was only defined by an app header, so the module had to be checked
+and tested through the app.
 
-- `roc check RayEcs.roc` prints `No errors found`, whatever the file contains.
-- `roc test RayEcs.roc` shows what is actually going on: `This Input type is
-  declared to be in rr.App, which does not exist`, followed by dozens of
-  errors that follow from it.
-
-**Workaround.** Never check or test `RayEcs.roc` directly. Go through the app,
-which also runs the tests of every module it imports:
+On `nightly-2026-10-06-c34079d` this is fixed: a deliberate type error in
+`examples/RayEcs.roc` is reported by `roc check examples/RayEcs.roc`, and
+`roc test examples/RayEcs.roc` runs its tests. Every file can be checked and
+tested on its own:
 
 ```sh
-roc check main.roc
-roc test main.roc
+roc check examples/RayEcs.roc
+roc test examples/RayEcs.roc
 ```
-
-**Recheck.** Introduce a deliberate type error in `RayEcs.roc` and run
-`roc check RayEcs.roc`. If it is reported, the module can be checked alone.
 
 ## 4. Effectful functions cannot be called from `expect`
 
@@ -120,13 +117,13 @@ only exercised by running the app.
 
 ## 5. Methods are found on the underlying type, not on an alias
 
-**What fails.** `RayEcs.World(col, msg, e)` is an alias for `Ecs.IOWorld(...)`.
+**What fails.** `RayEcs.World(col, msg, e)` is an alias for `RayEcs.IOWorld(...)`.
 Method syntax looks methods up on `IOWorld`, so a function defined in
 `RayEcs` cannot be chained onto a world, and a qualified call in a chain does
 not parse:
 
 ```roc
-world.add_draw(system)          # no such method on Ecs.IOWorld
+world.add_draw(system)          # no such method on RayEcs.IOWorld
 world.RayEcs.add_draw(system)   # parse error: expected a field name after `.`
 ```
 
@@ -148,7 +145,7 @@ not both at once. With `Follower` in `main.roc` as the test case:
 | both | checks, tests pass |
 | `to_col` only | checks, tests pass |
 | `from_col` only | checks, tests pass |
-| neither | `roc check main.roc` does not finish (stopped after 35s; it normally takes about 4s) |
+| neither | `roc check examples/main.roc` does not finish (stopped after 35s; it normally takes about 4s) |
 
 There is no error message; the compiler just never returns.
 
@@ -170,6 +167,6 @@ Follower := {}.{
 If `roc check` ever seems stuck after adding a component, a missing `to_col`
 annotation is the first thing to look for.
 
-**Recheck.** Remove the `to_col` annotation from `Follower` in `main.roc` and
-run `roc check main.roc` with a time limit. If it finishes, both annotations
+**Recheck.** Remove the `to_col` annotation from `Follower` in
+`examples/main.roc` and run `roc check examples/main.roc` with a time limit. If it finishes, both annotations
 are optional.

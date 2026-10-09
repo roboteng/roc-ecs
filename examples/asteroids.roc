@@ -1,4 +1,7 @@
-app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst" }
+app [Model, program] {
+	ecs: "../package/main.roc",
+	rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst",
+}
 
 import rr.App
 import rr.Color
@@ -6,8 +9,8 @@ import rr.Devices
 import rr.Draw
 import rr.Random
 import rr.Text
-import Ecs
-import RayEcs exposing [Keyboard, Clock, Layer, Position, Size, Radius, FillColor, Gradient, Label, TextColor, TextAlign, FpsCounter]
+import ecs.Ecs
+import RayEcs exposing [Clock, FillColor, FpsCounter, Gradient, IOWorld, Keyboard, Label, Layer, Position, Radius, Size, TextAlign, TextColor]
 
 ## Everything on screen is an entity in the world: `RayEcs` reads the devices
 ## into it on every update and draws it on every render.
@@ -109,7 +112,7 @@ points_for = |size| match size {
 
 at = |x, y| Position.({ x: x, y: y })
 
-## The backdrop, the score line and the ship. `next_wave` brings the rocks.
+## The backdrop, the labels, the frame rate and the ship. `next_wave` brings the rocks.
 scene = |font, seed| spawn_ship(
 	Ecs.World.empty()
 		.spawn3(at(0, 0), Size.({ width: width, height: height }), Gradient.(TopToBottom(Color.from_hex_rgb(0x0b1020), Color.from_hex_rgb(0x020308))))
@@ -542,8 +545,9 @@ lives = |world| match world.single() {
 
 sizes = |world| rocks(world).map(|rock| rock.size)
 
-# `RayEcs` draws the backdrop and the four labels; the ship is an outline.
-expect RayEcs.scene(fresh()).len() == 5 and outlines(fresh()).len() == 1
+# `RayEcs` draws the backdrop, the four labels and the frame rate; the ship is
+# an outline.
+expect RayEcs.scene(fresh()).len() == 6 and outlines(fresh()).len() == 1
 
 # The first wave is four large rocks, none of them on top of the ship.
 expect {
