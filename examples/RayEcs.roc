@@ -12,11 +12,10 @@ import rr.Draw
 import rr.Keys
 import rr.Mouse
 import rr.Text
-import ecs.Ecs exposing [World]
+import ecs.Ecs
 
-## Runs an `IOWorld` on RocRay: its input is the `App.Input` that
-## `update!` receives, and its output is the `Draw.Frame` that `render!` draws
-## through.
+## Runs an `Ecs.World` on RocRay: its input is the `App.Input` that `update!`
+## receives, and its output is the `Draw.Frame` that `render!` draws through.
 ##
 ## `RayEcs.default` gives a world that already reads the devices and draws
 ## every entity that has the components of a shape:
@@ -33,8 +32,8 @@ import ecs.Ecs exposing [World]
 ## render! = |model, frame| RayEcs.render!(model.world, frame)
 ## ```
 ##
-## A `RayEcs.World` is a `RayEcs.IOWorld`, so more systems are added with its
-## `add_input` and `add_output`.
+## More systems are added to a `RayEcs.World` with its `add_input` and
+## `add_output`.
 ##
 ## What gets drawn. A `Layer` decides the order, lowest first; within a layer
 ## it is the order of this table:
@@ -50,84 +49,81 @@ import ecs.Ecs exposing [World]
 ## | `Position`, `FpsCounter`, `TextColor` | frame rate |
 RayEcs :: [].{
 
-	## A world that talks to the outside.
+	## An `Ecs.World` and the systems that connect it to RocRay: input systems
+	## read the `App.Input` of an `update!`, output systems draw through the
+	## `Draw.Frame` of a `render!`.
 	##
 	## col -> tag union of the component columns
-	## i -> input type, how the world gets information from the outside
-	## o -> output type, how the world sends information to the outside
-	## e -> error type
-	IOWorld(col, i, o, e) := {
-		inner : World(col),
-		input_systems : List((IOWorld(col, i, o, e), i => Try(IOWorld(col, i, o, e), e))),
-		output_systems : List((IOWorld(col, i, o, e), o => Try({}, e))),
+	## msg -> the app's task message type
+	World(col, msg) := {
+		inner : Ecs.World(col),
+		input_systems : List(InputSystem(col, msg)),
+		output_systems : List(DrawSystem(col, msg)),
 	}.{
-		new : World(col) -> IOWorld(col, i, o, e)
-		new = |world| IOWorld.({ inner: world, input_systems: [], output_systems: [] })
 
-		add_input : IOWorld(col, i, o, e), (IOWorld(col, i, o, e), i => Try(IOWorld(col, i, o, e), e)) -> IOWorld(col, i, o, e)
-		add_input = |io_world, system| IOWorld.(
+		## A world with no input or output systems of its own.
+		new : Ecs.World(col) -> World(col, msg)
+		new = |world| World.({ inner: world, input_systems: [], output_systems: [] })
+
+		add_input : World(col, msg), InputSystem(col, msg) -> World(col, msg)
+		add_input = |world, system| World.(
 			{
-				inner: io_world.inner,
-				input_systems: io_world.input_systems.append(system),
-				output_systems: io_world.output_systems,
+				inner: world.inner,
+				input_systems: world.input_systems.append(system),
+				output_systems: world.output_systems,
 			},
 		)
 
-		add_output : IOWorld(col, i, o, e), (IOWorld(col, i, o, e), o => Try({}, e)) -> IOWorld(col, i, o, e)
-		add_output = |io_world, system| IOWorld.(
+		add_output : World(col, msg), DrawSystem(col, msg) -> World(col, msg)
+		add_output = |world, system| World.(
 			{
-				inner: io_world.inner,
-				input_systems: io_world.input_systems,
-				output_systems: io_world.output_systems.append(system),
+				inner: world.inner,
+				input_systems: world.input_systems,
+				output_systems: world.output_systems.append(system),
 			},
 		)
 
 		## Feeds `input` through every input system, in the order they were
 		## added.
-		input! : IOWorld(col, i, o, e), i => Try(IOWorld(col, i, o, e), e)
-		input! = |io_world, input| {
-			var $world = io_world
-			for system in io_world.input_systems {
+		input! : World(col, msg), App.Input(msg) => Try(World(col, msg), [Exit(I64)])
+		input! = |world, input| {
+			var $world = world
+			for system in world.input_systems {
 				$world = system($world, input)?
 			}
 			Ok($world)
 		}
 
 		## Runs the inner world's systems once.
-		update : IOWorld(col, i, o, e) -> IOWorld(col, i, o, e)
-		update = |io_world| IOWorld.(
+		update : World(col, msg) -> World(col, msg)
+		update = |world| World.(
 			{
-				inner: io_world.inner.update(),
-				input_systems: io_world.input_systems,
-				output_systems: io_world.output_systems,
+				inner: world.inner.update(),
+				input_systems: world.input_systems,
+				output_systems: world.output_systems,
 			},
 		)
 
 		## Runs every output system, in the order they were added.
-		output! : IOWorld(col, i, o, e), o => Try({}, e)
-		output! = |io_world, out| {
-			for system in io_world.output_systems {
-				system(io_world, out)?
+		output! : World(col, msg), Draw.Frame => Try({}, [Exit(I64)])
+		output! = |world, frame| {
+			for system in world.output_systems {
+				system(world, frame)?
 			}
 			Ok({})
 		}
 	}
 
-	## col -> tag union of the component columns
-	## msg -> the app's task message type
-	## e -> errors a system can stop the app with, on top of `Exit`
-	World(col, msg, e) : IOWorld(col, App.Input(msg), Draw.Frame, [Exit(I64), ..e])
-
 	## Reads the host's input for this cycle. Runs in `update!`, before the
 	## world's own systems.
-	InputSystem(col, msg, e) : World(col, msg, e), App.Input(msg) => Try(World(col, msg, e), [Exit(I64), ..e])
+	InputSystem(col, msg) : World(col, msg), App.Input(msg) => Try(World(col, msg), [Exit(I64)])
 
 	## Draws the world. Runs in `render!`, the only place drawing is legal.
-	DrawSystem(col, msg, e) : World(col, msg, e), Draw.Frame => Try({}, [Exit(I64), ..e])
+	DrawSystem(col, msg) : World(col, msg), Draw.Frame => Try({}, [Exit(I64)])
 
 	## A world with no input or output systems of its own.
-	new : Ecs.World(col) -> World(col, msg, e)
-	new = |world| IOWorld.new(world)
+	new : Ecs.World(col) -> World(col, msg)
+	new = |world| World.new(world)
 
 	## A world with a devices entity, kept current by `read_devices`, that
 	## draws its shapes with `draw!`.
@@ -135,11 +131,11 @@ RayEcs :: [].{
 
 	## One `update!` cycle: every input system, then every system of the
 	## inner world.
-	update! : World(col, msg, e), App.Input(msg) => Try(World(col, msg, e), [Exit(I64), ..e])
+	update! : World(col, msg), App.Input(msg) => Try(World(col, msg), [Exit(I64)])
 	update! = |world, input| Ok(world.input!(input)?.update())
 
 	## One `render!`: every output system, in the order they were added.
-	render! : World(col, msg, e), Draw.Frame => Try({}, [Exit(I64), ..e])
+	render! : World(col, msg), Draw.Frame => Try({}, [Exit(I64)])
 	render! = |world, frame| world.output!(frame)
 
 	# Input
@@ -153,9 +149,9 @@ RayEcs :: [].{
 
 	## The input system that keeps every `Pointer`, `Keyboard` and `Clock`
 	## current.
-	read_devices = |world, input| Ok(IOWorld.({ ..world, inner: RayEcs.write_devices(world.inner, input) }))
+	read_devices = |world, input| Ok(World.({ ..world, inner: RayEcs.write_devices(world.inner, input) }))
 
-	## `read_devices` without the `IOWorld` around it.
+	## `read_devices` on the `Ecs.World` inside.
 	write_devices = |world, input| {
 		dt = input.time.elapsed_seconds
 		world

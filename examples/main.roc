@@ -13,7 +13,7 @@ import RayEcs exposing [BorderColor, BorderWidth, Clock, CornerRadius, FillColor
 
 ## Everything on screen is an entity in the world: `RayEcs` reads the devices
 ## into it on every update and draws it on every render.
-Model(c) : { world : RayEcs.World(c, Msg, []) }
+Model(c) : { world : RayEcs.World(c, Msg) }
 
 ## Nothing here waits, so there is no task to spawn and no message to fold in.
 ## An app that reads a file or fetches a URL gives `Msg` the variants those

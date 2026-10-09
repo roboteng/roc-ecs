@@ -10,11 +10,11 @@ import rr.Draw
 import rr.Random
 import rr.Text
 import ecs.Ecs
-import RayEcs exposing [Clock, FillColor, FpsCounter, Gradient, IOWorld, Keyboard, Label, Layer, Position, Radius, Size, TextAlign, TextColor]
+import RayEcs exposing [Clock, FillColor, FpsCounter, Gradient, Keyboard, Label, Layer, Position, Radius, Size, TextAlign, TextColor]
 
 ## Everything on screen is an entity in the world: `RayEcs` reads the devices
 ## into it on every update and draws it on every render.
-Model(c) : { world : RayEcs.World(c, Msg, []) }
+Model(c) : { world : RayEcs.World(c, Msg) }
 
 ## Nothing here waits, so there is no task to spawn and no message to fold in.
 Msg : []

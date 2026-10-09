@@ -80,24 +80,7 @@ match world.single() {
 This one is how static dispatch is specified rather than a bug, so it is
 unlikely to change.
 
-## 3. `roc check` on a module that imports the platform reported no errors
-
-**No longer needed.** On `release-safe-fd6625e8`, `roc check RayEcs.roc`
-printed `No errors found` whatever the file contained, because the `rr`
-shorthand was only defined by an app header, so the module had to be checked
-and tested through the app.
-
-On `nightly-2026-10-06-c34079d` this is fixed: a deliberate type error in
-`examples/RayEcs.roc` is reported by `roc check examples/RayEcs.roc`, and
-`roc test examples/RayEcs.roc` runs its tests. Every file can be checked and
-tested on its own:
-
-```sh
-roc check examples/RayEcs.roc
-roc test examples/RayEcs.roc
-```
-
-## 4. Effectful functions cannot be called from `expect`
+## 3. Effectful functions cannot be called from `expect`
 
 **What fails.** An `expect` cannot call a function with `=>` in its type, and
 `Draw.Frame` only exists inside `render!`. This is stated in the RocRay
@@ -115,27 +98,7 @@ thin shells around them:
 Nothing asserts that `draw!` issues the calls `scene` returns; that part is
 only exercised by running the app.
 
-## 5. Methods are found on the underlying type, not on an alias
-
-**What fails.** `RayEcs.World(col, msg, e)` is an alias for `RayEcs.IOWorld(...)`.
-Method syntax looks methods up on `IOWorld`, so a function defined in
-`RayEcs` cannot be chained onto a world, and a qualified call in a chain does
-not parse:
-
-```roc
-world.add_draw(system)          # no such method on RayEcs.IOWorld
-world.RayEcs.add_draw(system)   # parse error: expected a field name after `.`
-```
-
-**Workaround.** `RayEcs` adds no wrappers of its own for registering systems.
-Worlds use `IOWorld.add_input` and `IOWorld.add_output` directly, and the
-`RayEcs` functions that take a world (`RayEcs.default`, `RayEcs.update!`,
-`RayEcs.render!`) are called as plain functions.
-
-Making `RayEcs.World` its own nominal type would give it methods, at the cost
-of unwrapping it in every system. Like entry 2, this is by design.
-
-## 6. A component with neither method annotated hangs the compiler
+## 4. A component with neither method annotated hangs the compiler
 
 **What fails.** A component's `to_col` and `from_col` can each be inferred, but
 not both at once. With `Follower` in `main.roc` as the test case:
