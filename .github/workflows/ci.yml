@@ -10,7 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  # The package is pure Roc with no platform, so it tracks the latest nightly.
+  package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,23 +23,6 @@ jobs:
       - run: roc fmt --check package examples
 
       - run: roc test package/main.roc
-
-      # `roc check` exits 2 for warnings alone, and the roc-ray platform warns
-      # whenever the nightly is newer than the one it pins, so only errors fail.
-      # That also lets a genuine warning in our own example code through.
-      #
-      # TODO: once roc-ray pins a newer Roc and the examples check clean, drop
-      # the exit-status handling so warnings block too.
-      - name: Check examples
-        run: |
-          set -uo pipefail
-          for example in examples/*.roc; do
-            roc check "$example"
-            status=$?
-            if [[ $status -ne 0 && $status -ne 2 ]]; then
-              exit "$status"
-            fi
-          done
 
       - id: previous
         uses: roc-lang/release-package/actions/resolve-previous-release@af2f0cd8662874b825ff3917f4286e793ba18c55
@@ -52,3 +36,44 @@ jobs:
         env:
           PREVIOUS_URL: ${{ steps.previous.outputs.previous_url }}
         run: roc bump --old "$PREVIOUS_URL" package/main.roc
+
+  # The examples run on roc-ray, which only compiles with the nightly it pins,
+  # so they are checked with that compiler rather than ours. This also checks
+  # the package against the compiler roc-ray users actually have.
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The pin is the `roc: "nightly-..."` entry in the header of the roc-ray
+      # release the examples depend on, so moving them to a new roc-ray moves
+      # the compiler with it.
+      - id: pin
+        name: Read roc-ray's Roc pin
+        run: |
+          set -euo pipefail
+          urls="$(grep -ohE 'https://github\.com/lukewilliamboswell/roc-ray/releases/download/[^"]+\.tar\.zst' examples/*.roc | sort -u)"
+          if [[ "$(grep -c . <<< "$urls")" -ne 1 ]]; then
+            echo "::error::expected the examples to share one roc-ray release, found: $urls"
+            exit 1
+          fi
+          curl -fsSL "$urls" | tar --zstd -xO main.roc > "$RUNNER_TEMP/roc-ray-main.roc"
+          tag="$(sed -nE 's/^[[:space:]]*roc: "(nightly-[0-9a-z-]+)",?$/\1/p' "$RUNNER_TEMP/roc-ray-main.roc")"
+          if [[ -z "$tag" ]]; then
+            echo "::error::could not find a Roc pin in the header of $urls"
+            exit 1
+          fi
+          echo "nightly_tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - uses: roc-lang/setup-roc@cbe782d6f165b89c87d99f50a59ac4f5f73b4427 # v0.3.0
+        with:
+          version: nightly-new-compiler
+          nightly-tag: ${{ steps.pin.outputs.nightly_tag }}
+
+      # `roc check` exits non-zero for warnings as well as errors.
+      - name: Check examples
+        run: |
+          set -euo pipefail
+          for example in examples/*.roc; do
+            roc check "$example"
+          done
