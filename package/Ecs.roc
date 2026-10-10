@@ -567,7 +567,6 @@ migrate = |world, entity, slot, shape, extra| {
 Pos := { x : I64, y : I64 }.{
 	is_eq : _
 
-	to_col : List(Pos) -> [Positions(List(Pos))]
 	to_col = |list| Positions(list)
 
 	from_col = |col| match col {
@@ -579,7 +578,6 @@ Pos := { x : I64, y : I64 }.{
 Vel := { dx : I64, dy : I64 }.{
 	is_eq : _
 
-	to_col : List(Vel) -> [Velocities(List(Vel))]
 	to_col = |list| Velocities(list)
 
 	from_col = |col| match col {
@@ -591,7 +589,6 @@ Vel := { dx : I64, dy : I64 }.{
 Name := Str.{
 	is_eq : _
 
-	to_col : List(Name) -> [Names(List(Name))]
 	to_col = |list| Names(list)
 
 	from_col = |col| match col {
@@ -601,7 +598,6 @@ Name := Str.{
 }
 
 Frozen := {}.{
-	to_col : List(Frozen) -> [Frozens(List(Frozen))]
 	to_col = |list| Frozens(list)
 
 	from_col = |col| match col {

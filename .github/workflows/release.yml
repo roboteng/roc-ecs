@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - package/**
+      - .github/workflows/release.yml
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: Release version, for example 1.2.3 or 1.0.0-rc1. Empty lets `roc bump` pick it.
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# One release at a time; a second merge waits for the first to publish so it
+# bumps from that release rather than racing it for the same version.
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: check
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.validate.outputs.release_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: roc-lang/setup-roc@cbe782d6f165b89c87d99f50a59ac4f5f73b4427 # v0.3.0
+        with:
+          version: nightly-new-compiler
+
+      - id: previous
+        uses: roc-lang/release-package/actions/resolve-previous-release@af2f0cd8662874b825ff3917f4286e793ba18c55
+        with:
+          github_token: ${{ github.token }}
+
+      # A merge carries no version number, so ask `roc bump` which one the API
+      # diff against the previous release calls for. Its last word on the
+      # matter is a line like `1.2.3 -> 1.3.0`.
+      - id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.release_version }}
+          PREVIOUS_URL: ${{ steps.previous.outputs.previous_url }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$REQUESTED_VERSION" ]]; then
+            version="$REQUESTED_VERSION"
+          elif [[ -z "$PREVIOUS_URL" ]]; then
+            version="1.0.0"
+          else
+            roc bump --old "$PREVIOUS_URL" package/main.roc > "$RUNNER_TEMP/bump.txt"
+            cat "$RUNNER_TEMP/bump.txt"
+            version="$(sed -nE 's/^[0-9]+\.[0-9]+\.[0-9]+ -> ([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' "$RUNNER_TEMP/bump.txt" | tail -n 1)"
+            if [[ -z "$version" ]]; then
+              echo "::error::could not read the next version from roc bump output"
+              exit 1
+            fi
+          fi
+          echo "release_version=$version" >> "$GITHUB_OUTPUT"
+
+      - id: validate
+        uses: roc-lang/release-package/actions/validate-release@af2f0cd8662874b825ff3917f4286e793ba18c55
+        with:
+          release_version: ${{ steps.version.outputs.release_version }}
+          github_token: ${{ github.token }}
+
+      # The first release has nothing to compare against.
+      - uses: roc-lang/release-package/actions/run-bump-check@af2f0cd8662874b825ff3917f4286e793ba18c55
+        with:
+          release_version: ${{ steps.validate.outputs.release_version }}
+          previous_url: ${{ steps.previous.outputs.previous_url }}
+          bump_check: ${{ steps.previous.outputs.previous_url != '' && 'require' || 'warn' }}
+          bump_entrypoint: package/main.roc
+
+      - run: |
+          mkdir -p dist
+          roc bundle package/main.roc --output-dir dist
+
+      - id: bundles
+        uses: roc-lang/release-package/actions/prepare-bundles@af2f0cd8662874b825ff3917f4286e793ba18c55
+        with:
+          bundle_glob: dist/*.tar.zst
+          test_os_json: '["ubuntu-latest"]'
+
+      # Test what ships: unpack the bundle somewhere else and run its expects.
+      - name: Test bundle
+        run: |
+          set -euo pipefail
+          bundle="$(ls "$PWD"/.release/bundles/*.tar.zst)"
+          mkdir "$RUNNER_TEMP/unbundled"
+          cd "$RUNNER_TEMP/unbundled"
+          roc unbundle "$bundle"
+          roc test */main.roc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-bundles
+          include-hidden-files: true
+          path: .release/bundles/*
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata
+          include-hidden-files: true
+          path: |
+            .release/bump-output.txt
+            .release/previous-url.txt
+            .release/release-bundles.json
+            .release/test-matrix.json
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-bundles
+          path: .release/bundles
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-metadata
+          path: .release
+
+      - uses: roc-lang/release-package/actions/make-release-notes@af2f0cd8662874b825ff3917f4286e793ba18c55
+        with:
+          release_version: ${{ needs.build.outputs.release_version }}
+          github_token: ${{ github.token }}
+
+      - uses: roc-lang/release-package/actions/publish-release@af2f0cd8662874b825ff3917f4286e793ba18c55
+        with:
+          release_version: ${{ needs.build.outputs.release_version }}
+          github_token: ${{ github.token }}
