@@ -64,6 +64,20 @@ Ecs :: [].{
 			R.from_res(world.resources)
 		}
 
+		## Replaces the resources with what `change` makes of them:
+		##
+		##     world.map_resources(|res| { ..res, tick: Tick.(n + 1) })
+		map_resources : World(col, res), (res -> res) -> World(col, res)
+		map_resources = |world, change| World.(
+			{
+				archetypes: world.archetypes,
+				slots: world.slots,
+				despawned: world.despawned,
+				systems: world.systems,
+				resources: change(world.resources),
+			},
+		)
+
 		## Systems run in the order they were added, once per `update`.
 		add_system : World(col, res), (World(col, res) -> World(col, res)) -> World(col, res)
 		add_system = |world, system| World.(
@@ -801,4 +815,12 @@ expect {
 		)
 	Title.(title) = world.resource()
 	title == "demo" and positions(world.update()) == [(4, 1)]
+}
+
+# Resources are replaced as a whole, so a change keeps the fields it leaves out.
+expect {
+	world = Ecs.World.empty({ tick: Tick.(3), title: Title.("demo") }).map_resources(|res| { ..res, tick: Tick.(4) })
+	Tick.(n) = world.resource()
+	Title.(title) = world.resource()
+	n == 4 and title == "demo"
 }

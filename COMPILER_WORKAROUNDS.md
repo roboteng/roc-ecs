@@ -52,28 +52,24 @@ the `_position` style arguments can be replaced with patterns.
 ## 2. A method cannot be called on a value whose type is not known yet
 
 **What fails.** `value.method()` needs the type of `value` to already be
-resolved. `World.single` and `World.get` return whichever component the caller
-expects, so calling a method on their result directly gives the compiler
-nothing to go on:
+resolved. `World.resource`, `World.single` and `World.get` return whichever
+type the caller expects, so calling a method on their result directly gives
+the compiler nothing to go on:
 
 ```roc
-match world.single() {
-    Ok(pointer) => ... pointer.position() ...
-}
-# This is trying to dispatch a method named from_col on an unresolved type variable
+world.resource().position()
+# This is trying to dispatch a method named from_res on an unresolved type variable
 ```
 
 **Workarounds.** Either of these was confirmed to compile:
 
 ```roc
 # annotate the result first (what ray-basics.roc does)
-found : Try(Pointer, _)
-found = world.single()
+pointer : Pointer
+pointer = world.resource()
 
 # or call the function by its qualified name instead of as a method
-match world.single() {
-    Ok(pointer) => ... Pointer.position(pointer) ...
-}
+Pointer.position(world.resource())
 ```
 
 This one is how static dispatch is specified rather than a bug, so it is
