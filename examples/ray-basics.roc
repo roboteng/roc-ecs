@@ -13,7 +13,7 @@ import RayEcs exposing [BorderColor, BorderWidth, Clock, CornerRadius, FillColor
 
 ## Everything on screen is an entity in the world: `RayEcs` reads the devices
 ## into it on every update and draws it on every render.
-Model(c) : { world : RayEcs.World(c, Msg) }
+Model(c) : { world : RayEcs.World(c, {}, Msg) }
 
 ## Nothing here waits, so there is no task to spawn and no message to fold in.
 ## An app that reads a file or fetches a URL gives `Msg` the variants those
@@ -66,7 +66,7 @@ fading = |color, alpha| RadialGradient.({ inner: Color.with_alpha(color, alpha),
 ## The entities, back to front.
 scene = |font| {
 	title_width = font.measure({ text: title, size: 38, spacing: Draw.default_spacing }).width
-	Ecs.World.empty()
+	Ecs.World.empty({})
 		.spawn3(at(0, 0), Size.({ width: 800, height: 600 }), Gradient.(TopToBottom(Color.from_hex_rgb(0x131f38), Color.from_hex_rgb(0x070b16))))
 	# Two glows on the backdrop; the accent one breathes.
 		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(620, 90)).add(Radius.(220)).add(fading(blue, 90)).add(Accent.(90)).add(Pulse.({ base: 220, amount: 40 }))).0

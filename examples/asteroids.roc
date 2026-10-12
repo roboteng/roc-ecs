@@ -14,7 +14,7 @@ import RayEcs exposing [Clock, FillColor, FpsCounter, Gradient, Keyboard, Label,
 
 ## Everything on screen is an entity in the world: `RayEcs` reads the devices
 ## into it on every update and draws it on every render.
-Model(c) : { world : RayEcs.World(c, Msg) }
+Model(c) : { world : RayEcs.World(c, {}, Msg) }
 
 ## Nothing here waits, so there is no task to spawn and no message to fold in.
 Msg : []
@@ -114,7 +114,7 @@ at = |x, y| Position.({ x: x, y: y })
 
 ## The backdrop, the labels, the frame rate and the ship. `next_wave` brings the rocks.
 scene = |font, seed| spawn_ship(
-	Ecs.World.empty()
+	Ecs.World.empty({})
 		.spawn3(at(0, 0), Size.({ width: width, height: height }), Gradient.(TopToBottom(Color.from_hex_rgb(0x0b1020), Color.from_hex_rgb(0x020308))))
 		.spawn1(Game.({ score: 0, lives: 3, wave: 0, over: Bool.False, rng: seed }))
 		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(16, 12)).add(Label.({ text: "", size: 24, font: font })).add(TextColor.(Color.white)).add(Hud.(Score))).0
