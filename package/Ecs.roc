@@ -44,34 +44,60 @@ Ecs :: [].{
 		}
 	}
 
-	World(col) :: {
+	World(col, res) :: {
 		archetypes : List(Archetype(col)),
 		slots : List(Slot),
 		despawned : List(Entity),
-		systems : List(World(col) -> World(col)),
+		systems : List(World(col, res) -> World(col, res)),
+		resources : res,
 	}.{
-		empty : () -> World(col)
-		empty = || World.({ archetypes: [], slots: [], despawned: [], systems: [] })
+		empty : res -> World(col, res)
+		empty = |resources| World.({ archetypes: [], slots: [], despawned: [], systems: [], resources: resources })
+
+		## The resource the caller expects, picked out of the value handed to
+		## `empty`. Which one is decided by the type, as with components:
+		##
+		##     Clock.({ dt }) = world.resource()
+		resource : World(col, res) -> r where [r.Resource(res)]
+		resource = |world| {
+			R : r
+			R.from_res(world.resources)
+		}
+
+		## Replaces the resources with what `change` makes of them:
+		##
+		##     world.map_resources(|res| { ..res, tick: Tick.(n + 1) })
+		map_resources : World(col, res), (res -> res) -> World(col, res)
+		map_resources = |world, change| World.(
+			{
+				archetypes: world.archetypes,
+				slots: world.slots,
+				despawned: world.despawned,
+				systems: world.systems,
+				resources: change(world.resources),
+			},
+		)
 
 		## Systems run in the order they were added, once per `update`.
-		add_system : World(col), (World(col) -> World(col)) -> World(col)
+		add_system : World(col, res), (World(col, res) -> World(col, res)) -> World(col, res)
 		add_system = |world, system| World.(
 			{
 				archetypes: world.archetypes,
 				slots: world.slots,
 				despawned: world.despawned,
 				systems: world.systems.append(system),
+				resources: world.resources,
 			},
 		)
 
-		update : World(col) -> World(col)
+		update : World(col, res) -> World(col, res)
 		update = |world| world.systems.fold(world, |next, system| system(next))
 
 		## Number of live entities.
-		len : World(col) -> U64
+		len : World(col, res) -> U64
 		len = |world| world.archetypes.fold(0, |total, arch| total + arch.entities.len())
 
-		spawn : World(col), Bundle(col) -> (World(col), Entity)
+		spawn : World(col, res), Bundle(col) -> (World(col, res), Entity)
 		spawn = |world, Bundle.(columns)| {
 			(archetypes, index) = find_or_create(world.archetypes, columns)
 			target = arch_at(archetypes, index)
@@ -81,26 +107,26 @@ Ecs :: [].{
 				columns: target.columns.map(|column| pull(column, columns, 0)),
 			}
 			(
-				World.({ archetypes: put_arch(archetypes, index, filled), slots: claimed.slots, despawned: claimed.despawned, systems: world.systems }),
+				World.({ archetypes: put_arch(archetypes, index, filled), slots: claimed.slots, despawned: claimed.despawned, systems: world.systems, resources: world.resources }),
 				claimed.entity,
 			)
 		}
 
 		## `spawn1` to `spawn4` return only the world so that setup code can
 		## chain. Use `spawn` when you need the `Entity` back.
-		spawn1 : World(col), a -> World(col) where [a.Component(col)]
+		spawn1 : World(col, res), a -> World(col, res) where [a.Component(col)]
 		spawn1 = |world, a| world.spawn(Bundle.empty().add(a)).0
 
-		spawn2 : World(col), a, b -> World(col) where [a.Component(col), b.Component(col)]
+		spawn2 : World(col, res), a, b -> World(col, res) where [a.Component(col), b.Component(col)]
 		spawn2 = |world, a, b| world.spawn(Bundle.empty().add(a).add(b)).0
 
-		spawn3 : World(col), a, b, c -> World(col) where [a.Component(col), b.Component(col), c.Component(col)]
+		spawn3 : World(col, res), a, b, c -> World(col, res) where [a.Component(col), b.Component(col), c.Component(col)]
 		spawn3 = |world, a, b, c| world.spawn(Bundle.empty().add(a).add(b).add(c)).0
 
-		spawn4 : World(col), a, b, c, d -> World(col) where [a.Component(col), b.Component(col), c.Component(col), d.Component(col)]
+		spawn4 : World(col, res), a, b, c, d -> World(col, res) where [a.Component(col), b.Component(col), c.Component(col), d.Component(col)]
 		spawn4 = |world, a, b, c, d| world.spawn(Bundle.empty().add(a).add(b).add(c).add(d)).0
 
-		despawn : World(col), Entity -> Try(World(col), [NoSuchEntity])
+		despawn : World(col, res), Entity -> Try(World(col, res), [NoSuchEntity])
 		despawn = |world, entity| {
 			slot = locate(world.slots, entity)?
 			shrunk = remove_row(arch_at(world.archetypes, slot.arch), slot.row)
@@ -111,18 +137,19 @@ Ecs :: [].{
 						slots: retire(reseat(world.slots, shrunk, slot.row), entity, world.despawned.len()),
 						despawned: world.despawned.append(entity),
 						systems: world.systems,
+						resources: world.resources,
 					},
 				),
 			)
 		}
 
-		is_alive : World(col), Entity -> Bool
+		is_alive : World(col, res), Entity -> Bool
 		is_alive = |world, entity| locate(world.slots, entity).is_ok()
 
 		## Which component to read is decided by the type the caller expects:
 		##
 		##     Pos.(pos) = world.get(entity)?
-		get : World(col), Entity -> Try(c, [NoSuchEntity, MissingComponent]) where [c.Component(col)]
+		get : World(col, res), Entity -> Try(c, [NoSuchEntity, MissingComponent]) where [c.Component(col)]
 		get = |world, entity| {
 			slot = locate(world.slots, entity)?
 			list = fetch(arch_at(world.archetypes, slot.arch)) ? |_| MissingComponent
@@ -132,14 +159,14 @@ Ecs :: [].{
 		## Adds a component to an entity, or replaces the one it already has.
 		## Adding moves the entity to the archetype for its new set of
 		## components.
-		insert : World(col), Entity, c -> Try(World(col), [NoSuchEntity]) where [c.Component(col)]
+		insert : World(col, res), Entity, c -> Try(World(col, res), [NoSuchEntity]) where [c.Component(col)]
 		insert = |world, entity, component| {
 			slot = locate(world.slots, entity)?
 			source = arch_at(world.archetypes, slot.arch)
 			match fetch(source) {
 				Ok(list) => {
 					replaced = store(source, list.set(slot.row, component).ok_or(list))
-					Ok(World.({ archetypes: put_arch(world.archetypes, slot.arch, replaced), slots: world.slots, despawned: world.despawned, systems: world.systems }))
+					Ok(World.({ archetypes: put_arch(world.archetypes, slot.arch, replaced), slots: world.slots, despawned: world.despawned, systems: world.systems, resources: world.resources }))
 				}
 				Err(_) => {
 					column = column_of([component])
@@ -152,7 +179,7 @@ Ecs :: [].{
 		## `get`, the expected type picks the component:
 		##
 		##     (world2, Stunned.(_)) = world.take(entity)?
-		take : World(col), Entity -> Try((World(col), c), [NoSuchEntity, MissingComponent]) where [c.Component(col)]
+		take : World(col, res), Entity -> Try((World(col, res), c), [NoSuchEntity, MissingComponent]) where [c.Component(col)]
 		take = |world, entity| {
 			C : c
 			slot = locate(world.slots, entity)?
@@ -165,57 +192,74 @@ Ecs :: [].{
 
 		## Start a filtered query. `world.query2()` is short for
 		## `world.select().query2()`.
-		select : World(col) -> Selection(col)
-		select = |world| Selection.({ world: world, mask: world.archetypes.map(|_| Bool.True) })
+		select : World(col, res) -> Selection(col)
+		select = |world| Selection.({ archetypes: world.archetypes, mask: world.archetypes.map(|_| Bool.True) })
 
-		query1 : World(col) -> List((Entity, a)) where [a.Component(col)]
+		query1 : World(col, res) -> List((Entity, a)) where [a.Component(col)]
 		query1 = |world| world.select().query1()
 
-		query2 : World(col) -> List((Entity, a, b)) where [a.Component(col), b.Component(col)]
+		query2 : World(col, res) -> List((Entity, a, b)) where [a.Component(col), b.Component(col)]
 		query2 = |world| world.select().query2()
 
-		query3 : World(col) -> List((Entity, a, b, c)) where [a.Component(col), b.Component(col), c.Component(col)]
+		query3 : World(col, res) -> List((Entity, a, b, c)) where [a.Component(col), b.Component(col), c.Component(col)]
 		query3 = |world| world.select().query3()
 
-		query4 : World(col) -> List((Entity, a, b, c, d)) where [a.Component(col), b.Component(col), c.Component(col), d.Component(col)]
+		query4 : World(col, res) -> List((Entity, a, b, c, d)) where [a.Component(col), b.Component(col), c.Component(col), d.Component(col)]
 		query4 = |world| world.select().query4()
 
-		query5 : World(col) -> List((Entity, a, b, c, d, e)) where [a.Component(col), b.Component(col), c.Component(col), d.Component(col), e.Component(col)]
+		query5 : World(col, res) -> List((Entity, a, b, c, d, e)) where [a.Component(col), b.Component(col), c.Component(col), d.Component(col), e.Component(col)]
 		query5 = |world| world.select().query5()
 
-		single : World(col) -> Try(a, [NoMatch, ManyMatches]) where [a.Component(col)]
+		single : World(col, res) -> Try(a, [NoMatch, ManyMatches]) where [a.Component(col)]
 		single = |world| world.select().single()
 
-		map1 : World(col), (a -> a) -> World(col) where [a.Component(col)]
-		map1 = |world, fn| world.select().map1(fn)
+		map1 : World(col, res), (a -> a) -> World(col, res) where [a.Component(col)]
+		map1 = |world, fn| world.select().map1(fn).apply_to(world)
 
-		map2 : World(col), (a, b -> (a, b)) -> World(col) where [a.Component(col), b.Component(col)]
-		map2 = |world, fn| world.select().map2(fn)
+		map2 : World(col, res), (a, b -> (a, b)) -> World(col, res) where [a.Component(col), b.Component(col)]
+		map2 = |world, fn| world.select().map2(fn).apply_to(world)
 
-		map3 : World(col), (a, b, c -> (a, b, c)) -> World(col) where [a.Component(col), b.Component(col), c.Component(col)]
-		map3 = |world, fn| world.select().map3(fn)
+		map3 : World(col, res), (a, b, c -> (a, b, c)) -> World(col, res) where [a.Component(col), b.Component(col), c.Component(col)]
+		map3 = |world, fn| world.select().map3(fn).apply_to(world)
 
-		map_with : World(col), (a, b -> a) -> World(col) where [a.Component(col), b.Component(col)]
-		map_with = |world, fn| world.select().map_with(fn)
+		map_with : World(col, res), (a, b -> a) -> World(col, res) where [a.Component(col), b.Component(col)]
+		map_with = |world, fn| world.select().map_with(fn).apply_to(world)
 
-		map_with2 : World(col), (a, b, c -> a) -> World(col) where [a.Component(col), b.Component(col), c.Component(col)]
-		map_with2 = |world, fn| world.select().map_with2(fn)
+		map_with2 : World(col, res), (a, b, c -> a) -> World(col, res) where [a.Component(col), b.Component(col), c.Component(col)]
+		map_with2 = |world, fn| world.select().map_with2(fn).apply_to(world)
 	}
 
-	## A world narrowed to some of its archetypes.
+	## The archetypes of a world, narrowed to some of them.
 	##
 	## The components a query or map asks for already narrow it, so `having` is
 	## for components you want present but don't need to read, and `without`
 	## is for ones that must be absent. Both take a component's `to_col` to
 	## say which type they mean:
 	##
-	##     world.select().without(Frozen.to_col).map_with(|Pos.(p), Vel.(v)| ...)
-	Selection(col) :: { world : World(col), mask : List(Bool) }.{
+	##     world.select().without(Frozen.to_col).map_with(|Pos.(p), Vel.(v)| ...).apply_to(world)
+	##
+	## A selection holds only archetypes, so a map gives back a selection and
+	## `apply_to` puts the result into the world it was selected from.
+	Selection(col) :: { archetypes : List(Archetype(col)), mask : List(Bool) }.{
 		having : Selection(col), (List(c) -> col) -> Selection(col) where [c.Component(col)]
 		having = |selection, witness| narrow(selection, |arch| holds(arch, witness))
 
 		without : Selection(col), (List(c) -> col) -> Selection(col) where [c.Component(col)]
 		without = |selection, witness| narrow(selection, |arch| !holds(arch, witness))
+
+		## The world with its archetypes replaced by the selection's, including
+		## the ones that were narrowed away. `world` has to be the one the
+		## selection came from, with nothing spawned or despawned since.
+		apply_to : Selection(col), World(col, res) -> World(col, res)
+		apply_to = |selection, world| World.(
+			{
+				archetypes: selection.archetypes,
+				slots: world.slots,
+				despawned: world.despawned,
+				systems: world.systems,
+				resources: world.resources,
+			},
+		)
 
 		## Number of entities in the selected archetypes.
 		count : Selection(col) -> U64
@@ -285,7 +329,7 @@ Ecs :: [].{
 			}
 		}
 
-		map1 : Selection(col), (a -> a) -> World(col) where [a.Component(col)]
+		map1 : Selection(col), (a -> a) -> Selection(col) where [a.Component(col)]
 		map1 = |selection, fn| rewrite(
 			selection,
 			|arch| match fetch(arch) {
@@ -295,7 +339,7 @@ Ecs :: [].{
 		)
 
 		## Rewrites two components of every entity that has both.
-		map2 : Selection(col), (a, b -> (a, b)) -> World(col) where [a.Component(col), b.Component(col)]
+		map2 : Selection(col), (a, b -> (a, b)) -> Selection(col) where [a.Component(col), b.Component(col)]
 		map2 = |selection, fn| rewrite(
 			selection,
 			|arch| match (fetch(arch), fetch(arch)) {
@@ -307,7 +351,7 @@ Ecs :: [].{
 			},
 		)
 
-		map3 : Selection(col), (a, b, c -> (a, b, c)) -> World(col) where [a.Component(col), b.Component(col), c.Component(col)]
+		map3 : Selection(col), (a, b, c -> (a, b, c)) -> Selection(col) where [a.Component(col), b.Component(col), c.Component(col)]
 		map3 = |selection, fn| rewrite(
 			selection,
 			|arch| match (fetch(arch), fetch(arch), fetch(arch)) {
@@ -321,7 +365,7 @@ Ecs :: [].{
 
 		## Rewrites the first component while reading the second: the
 		## equivalent of a `(&mut A, &B)` query.
-		map_with : Selection(col), (a, b -> a) -> World(col) where [a.Component(col), b.Component(col)]
+		map_with : Selection(col), (a, b -> a) -> Selection(col) where [a.Component(col), b.Component(col)]
 		map_with = |selection, fn| rewrite(
 			selection,
 			|arch| match (fetch(arch), fetch(arch)) {
@@ -330,7 +374,7 @@ Ecs :: [].{
 			},
 		)
 
-		map_with2 : Selection(col), (a, b, c -> a) -> World(col) where [a.Component(col), b.Component(col), c.Component(col)]
+		map_with2 : Selection(col), (a, b, c -> a) -> Selection(col) where [a.Component(col), b.Component(col), c.Component(col)]
 		map_with2 = |selection, fn| rewrite(
 			selection,
 			|arch| match (fetch(arch), fetch(arch), fetch(arch)) {
@@ -346,6 +390,13 @@ c.Component(col) :
 	where [
 		c.to_col : List(c) -> col,
 		c.from_col : col -> Try(List(c), [WrongColumn]),
+	]
+
+## What a type needs in order to be a resource kept in `res`: state that
+## belongs to the world as a whole rather than to any entity, such as a clock.
+r.Resource(res) :
+	where [
+		r.from_res : res -> r,
 	]
 
 ## One component's storage in one archetype, together with the operations that
@@ -437,29 +488,24 @@ holds = |arch, _witness| {
 narrow : Ecs.Selection(col), (Archetype(col) -> Bool) -> Ecs.Selection(col)
 narrow = |selection, keep| Ecs.Selection.(
 	{
-		world: selection.world,
-		mask: List.map2(selection.mask, selection.world.archetypes, |selected, arch| selected and keep(arch)),
+		archetypes: selection.archetypes,
+		mask: List.map2(selection.mask, selection.archetypes, |selected, arch| selected and keep(arch)),
 	},
 )
 
 gather : Ecs.Selection(col), (Archetype(col) -> List(row)) -> List(row)
-gather = |selection, rows_of| List.map2(selection.mask, selection.world.archetypes, |selected, arch| (selected, arch)).fold(
+gather = |selection, rows_of| List.map2(selection.mask, selection.archetypes, |selected, arch| (selected, arch)).fold(
 	[],
 	|rows, (selected, arch)| if selected rows.concat(rows_of(arch)) else rows,
 )
 
-rewrite : Ecs.Selection(col), (Archetype(col) -> Archetype(col)) -> Ecs.World(col)
-rewrite = |selection, fn| {
-	world = selection.world
-	Ecs.World.(
-		{
-			archetypes: List.map2(selection.mask, world.archetypes, |selected, arch| if selected fn(arch) else arch),
-			slots: world.slots,
-			despawned: world.despawned,
-			systems: world.systems,
-		},
-	)
-}
+rewrite : Ecs.Selection(col), (Archetype(col) -> Archetype(col)) -> Ecs.Selection(col)
+rewrite = |selection, fn| Ecs.Selection.(
+	{
+		archetypes: List.map2(selection.mask, selection.archetypes, |selected, arch| if selected fn(arch) else arch),
+		mask: selection.mask,
+	},
+)
 
 arch_at : List(Archetype(col)), U64 -> Archetype(col)
 arch_at = |archetypes, index| match archetypes.get(index) {
@@ -541,7 +587,7 @@ locate = |slots, entity| match slots.get(entity.id.to_u64()) {
 
 ## Moves an entity to the archetype for `shape`, carrying over every component
 ## the two archetypes share and taking the rest from `extra`.
-migrate : Ecs.World(col), Ecs.Entity, Seat, List(Column(col)), List(Column(col)) -> Ecs.World(col)
+migrate : Ecs.World(col, res), Ecs.Entity, Seat, List(Column(col)), List(Column(col)) -> Ecs.World(col, res)
 migrate = |world, entity, slot, shape, extra| {
 	source = arch_at(world.archetypes, slot.arch)
 	(archetypes, index) = find_or_create(world.archetypes, shape)
@@ -558,6 +604,7 @@ migrate = |world, entity, slot, shape, extra| {
 			slots: reseat(world.slots, shrunk, slot.row).set(entity.id.to_u64(), moved).ok_or(world.slots),
 			despawned: world.despawned,
 			systems: world.systems,
+			resources: world.resources,
 		},
 	)
 }
@@ -606,12 +653,20 @@ Frozen := {}.{
 	}
 }
 
+Tick := I64.{
+	from_res = |res| res.tick
+}
+
+Title := Str.{
+	from_res = |res| res.title
+}
+
 pos = |x, y| Pos.({ x: x, y: y })
 
 vel = |dx, dy| Vel.({ dx: dx, dy: dy })
 
 ## Three movers (one frozen), one thing that only has a position, one name.
-sample = || Ecs.World.empty()
+sample = || Ecs.World.empty({})
 	.spawn2(pos(0, 0), vel(1, 1))
 	.spawn3(pos(10, 10), vel(2, 0), Name.("b"))
 	.spawn3(pos(20, 20), vel(5, 5), Frozen.({}))
@@ -642,7 +697,8 @@ expect {
 }
 
 expect {
-	moved = sample().select().without(Frozen.to_col).map_with(|Pos.(p), Vel.(v)| Pos.({ x: p.x + v.dx, y: p.y + v.dy }))
+	world = sample()
+	moved = world.select().without(Frozen.to_col).map_with(|Pos.(p), Vel.(v)| Pos.({ x: p.x + v.dx, y: p.y + v.dy })).apply_to(world)
 	positions(moved) == [(1, 1), (12, 10), (20, 20), (99, 99)]
 }
 
@@ -699,7 +755,7 @@ expect {
 # Despawning from the middle of an archetype moves its last entity into the
 # hole, and that entity's handle has to keep working.
 expect {
-	(world0, first) = Ecs.World.empty().spawn(Ecs.Bundle.empty().add(pos(1, 1)))
+	(world0, first) = Ecs.World.empty({}).spawn(Ecs.Bundle.empty().add(pos(1, 1)))
 	(world1, _second) = world0.spawn(Ecs.Bundle.empty().add(pos(2, 2)))
 	(world2, third) = world1.spawn(Ecs.Bundle.empty().add(pos(3, 3)))
 	world3 = world2.despawn(first)?
@@ -709,7 +765,7 @@ expect {
 
 # A despawned entity's slot is reused, but old handles to it stay dead.
 expect {
-	(world0, old) = Ecs.World.empty().spawn(Ecs.Bundle.empty().add(pos(1, 1)))
+	(world0, old) = Ecs.World.empty({}).spawn(Ecs.Bundle.empty().add(pos(1, 1)))
 	world1 = world0.despawn(old)?
 	(world2, new) = world1.spawn(Ecs.Bundle.empty().add(pos(2, 2)))
 	stale : Try(Pos, _)
@@ -729,7 +785,7 @@ expect {
 # Despawned entities wait in their own list, generation untouched, and the
 # most recently despawned id is the first to be reused.
 expect {
-	(world0, first) = Ecs.World.empty().spawn(Ecs.Bundle.empty().add(pos(1, 1)))
+	(world0, first) = Ecs.World.empty({}).spawn(Ecs.Bundle.empty().add(pos(1, 1)))
 	(world1, second) = world0.spawn(Ecs.Bundle.empty().add(pos(2, 2)))
 	world2 = world1.despawn(first)?.despawn(second)?
 	(world3, third) = world2.spawn(Ecs.Bundle.empty().add(pos(3, 3)))
@@ -745,4 +801,26 @@ expect {
 	world = sample().spawn4(pos(1, 2), vel(3, 4), Name.("all"), Frozen.({}))
 	found = world.query5().map(|(_, Pos.(p), Vel.(v), Name.(n), Frozen.(_), Pos.(again))| (p.x, v.dy, n, again.y))
 	found == [(1, 4, "all", 2)]
+}
+
+# A resource is picked by the type the caller expects, and systems can read it.
+expect {
+	world = Ecs.World.empty({ tick: Tick.(3), title: Title.("demo") })
+		.spawn1(pos(1, 1))
+		.add_system(
+			|w| {
+				Tick.(n) = w.resource()
+				w.map1(|Pos.(p)| Pos.({ x: p.x + n, y: p.y }))
+			},
+		)
+	Title.(title) = world.resource()
+	title == "demo" and positions(world.update()) == [(4, 1)]
+}
+
+# Resources are replaced as a whole, so a change keeps the fields it leaves out.
+expect {
+	world = Ecs.World.empty({ tick: Tick.(3), title: Title.("demo") }).map_resources(|res| { ..res, tick: Tick.(4) })
+	Tick.(n) = world.resource()
+	Title.(title) = world.resource()
+	n == 4 and title == "demo"
 }

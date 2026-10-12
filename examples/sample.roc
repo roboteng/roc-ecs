@@ -26,22 +26,14 @@ Velocity := { x : F32, y : F32 }.{
 	}
 }
 
-## Resources are currently stored just like components
+## A resource says where it lives in the record handed to `World.empty`
 Clock := { dt : F32 }.{
-	to_col = |list| Clocks(list)
-	from_col = |col| match col {
-		Clocks(clocks) => Ok(clocks)
-		_ => Err(WrongColumn)
-	}
+	from_res = |res| res.clock
 }
 
 update_positions = |world| {
-	# We ask for a single `Clock`, returning early if we can't find it
-	Clock.({ dt: dt }) =
-		match world.single() {
-			Ok(clock) => clock
-			Err(_) => return world
-		}
+	# The pattern says which resource we want
+	Clock.({ dt: dt }) = world.resource()
 
 	# `World.map_with` allows you to write to one column, while reading from another
 	world.map_with(
@@ -53,9 +45,8 @@ update_positions = |world| {
 
 expect {
 	# `World`s store arbitrary components for each `Entity`, and the systems that operate on them
-	world = World.empty()
+	world = World.empty({ clock: Clock.({ dt: 0.25 }) })
 		.add_system(update_positions)
-		.spawn1(Clock.({ dt: 0.25 }))
 		.spawn2(Position.({ x: 1, y: 2 }), Velocity.({ x: -1, y: 3 }))
 
 	# `World.update` runs through all the systems saved in the `World`

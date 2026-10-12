@@ -13,7 +13,7 @@ import RayEcs exposing [BorderColor, BorderWidth, Clock, CornerRadius, FillColor
 
 ## Everything on screen is an entity in the world: `RayEcs` reads the devices
 ## into it on every update and draws it on every render.
-Model(c) : { world : RayEcs.World(c, Msg) }
+Model(c) : { world : RayEcs.World(c, {}, Msg) }
 
 ## Nothing here waits, so there is no task to spawn and no message to fold in.
 ## An app that reads a file or fetches a URL gives `Msg` the variants those
@@ -66,7 +66,7 @@ fading = |color, alpha| RadialGradient.({ inner: Color.with_alpha(color, alpha),
 ## The entities, back to front.
 scene = |font| {
 	title_width = font.measure({ text: title, size: 38, spacing: Draw.default_spacing }).width
-	Ecs.World.empty()
+	Ecs.World.empty({ ray: RayEcs.resources })
 		.spawn3(at(0, 0), Size.({ width: 800, height: 600 }), Gradient.(TopToBottom(Color.from_hex_rgb(0x131f38), Color.from_hex_rgb(0x070b16))))
 	# Two glows on the backdrop; the accent one breathes.
 		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(620, 90)).add(Radius.(220)).add(fading(blue, 90)).add(Accent.(90)).add(Pulse.({ base: 220, amount: 40 }))).0
@@ -89,50 +89,34 @@ scene = |font| {
 
 ## Ends the app when Escape goes down.
 quit_on_escape = |world, _input| {
-	found : Try(Keyboard, _)
-	found = world.inner.single()
-	match found {
-		Ok(keyboard) if keyboard.pressed(KeyEscape) => Err(Exit(0))
-		_ => Ok(world)
-	}
+	keyboard : Keyboard
+	keyboard = world.inner.resource()
+	if keyboard.pressed(KeyEscape) Err(Exit(0)) else Ok(world)
 }
 
 ## Keeps every `Follower` under the pointer.
 follow_pointer = |world| {
-	found : Try(Pointer, _)
-	found = world.single()
-	match found {
-		Ok(pointer) => world.map_with(|_position, Follower.(_)| Position.(pointer.position()))
-		Err(_) => world
-	}
+	pointer : Pointer
+	pointer = world.resource()
+	world.map_with(|_position, Follower.(_)| Position.(pointer.position()))
 }
 
 ## Recolors every `Accent`: red while the left button is held, blue otherwise.
 tint_accents = |world| {
-	found : Try(Pointer, _)
-	found = world.single()
-	match found {
-		Ok(pointer) => {
-			accent = if pointer.down(Left) red else blue
-			world
-				.map_with(|_fill, Accent.(alpha)| FillColor.(Color.with_alpha(accent, alpha)))
-				.map_with(|_gradient, Accent.(alpha)| fading(accent, alpha))
-		}
-		Err(_) => world
-	}
+	pointer : Pointer
+	pointer = world.resource()
+	accent = if pointer.down(Left) red else blue
+	world
+		.map_with(|_fill, Accent.(alpha)| FillColor.(Color.with_alpha(accent, alpha)))
+		.map_with(|_gradient, Accent.(alpha)| fading(accent, alpha))
 }
 
 ## One slow sine drives every `Pulse`, so the scene breathes together.
 pulse = |world| {
-	found : Try(Clock, _)
-	found = world.single()
-	match found {
-		Ok(clock) => {
-			wave = 0.5 + 0.5 * F32.sin(Clock.get(clock).total * 1.6)
-			world.map_with(|_radius, Pulse.(p)| Radius.(p.base + p.amount * wave))
-		}
-		Err(_) => world
-	}
+	clock : Clock
+	clock = world.resource()
+	wave = 0.5 + 0.5 * F32.sin(clock.get().total * 1.6)
+	world.map_with(|_radius, Pulse.(p)| Radius.(p.base + p.amount * wave))
 }
 
 # Components
@@ -191,7 +175,7 @@ expect drawn(scene(Text.font_stub)) == ["gradient", "glow", "glow", "fps", "roun
 # Holding the left button turns every accent red, at the alpha it asked for.
 expect {
 	held = App.Input.for_tests({}).with_devices(Devices.none.with_mouse_position({ x: 30, y: 40 }).with_mouse_button_down(Left))
-	world = tint_accents(follow_pointer(RayEcs.write_devices(RayEcs.spawn_devices(scene(Text.font_stub)), held)))
+	world = tint_accents(follow_pointer(RayEcs.write_devices(scene(Text.font_stub), held)))
 	fills = world.select().having(Accent.to_col).query1().map(|(_, fill)| FillColor.get(fill))
 	followers = world.select().having(Follower.to_col).query1().map(|(_, position)| Position.get(position))
 	fills == [Color.with_alpha(red, 170), Color.with_alpha(red, 40), Color.with_alpha(red, 255)]

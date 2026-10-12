@@ -14,7 +14,7 @@ import RayEcs exposing [Clock, FillColor, FpsCounter, Gradient, Keyboard, Label,
 
 ## Everything on screen is an entity in the world: `RayEcs` reads the devices
 ## into it on every update and draws it on every render.
-Model(c) : { world : RayEcs.World(c, Msg) }
+Model(c) : { world : RayEcs.World(c, { game : Game }, Msg) }
 
 ## Nothing here waits, so there is no task to spawn and no message to fold in.
 Msg : []
@@ -114,9 +114,8 @@ at = |x, y| Position.({ x: x, y: y })
 
 ## The backdrop, the labels, the frame rate and the ship. `next_wave` brings the rocks.
 scene = |font, seed| spawn_ship(
-	Ecs.World.empty()
+	Ecs.World.empty({ ray: RayEcs.resources, game: Game.({ score: 0, lives: 3, wave: 0, over: Bool.False, rng: seed }) })
 		.spawn3(at(0, 0), Size.({ width: width, height: height }), Gradient.(TopToBottom(Color.from_hex_rgb(0x0b1020), Color.from_hex_rgb(0x020308))))
-		.spawn1(Game.({ score: 0, lives: 3, wave: 0, over: Bool.False, rng: seed }))
 		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(16, 12)).add(Label.({ text: "", size: 24, font: font })).add(TextColor.(Color.white)).add(Hud.(Score))).0
 		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(784, 12)).add(Label.({ text: "", size: 24, font: font })).add(TextColor.(Color.white)).add(TextAlign.((Top, Right))).add(Hud.(Lives))).0
 		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(400, 300)).add(Label.({ text: "", size: 30, font: font })).add(TextColor.(Color.white)).add(TextAlign.((Middle, Center))).add(Hud.(Banner))).0
@@ -138,36 +137,34 @@ spawn_ship = |world| Ecs.World.spawn(
 
 ## A rock of `size`, between `near` and `far` away from `origin`, with a shape,
 ## a course and a spin drawn from the game's generator.
-spawn_rock = |world, size, origin, near, far| match world.single() {
-	Ok(Game.(game)) => {
-		bearing = Random.step(game.rng, Random.f32(0, tau))
-		distance = Random.next(bearing, Random.f32(near, far))
-		course = Random.next(distance, Random.f32(0, tau))
-		pace = Random.next(course, Random.f32(0.6, 1.4))
-		spin = Random.next(pace, Random.f32(-1.2, 1.2))
-		bumps = Random.next(spin, Random.list(Random.f32(0.72, 1), 10))
-		speed = speed_of(size) * pace.value
-		radius = radius_of(size)
-		corners = bumps.value.fold(
-			[],
-			|points, bump| {
-				angle = U64.to_f32(points.len()) * tau / 10
-				points.append({ x: F32.cos(angle) * radius * bump, y: F32.sin(angle) * radius * bump })
-			},
-		)
-		Ecs.World.spawn(
-			world.map1(|Game.(_)| Game.({ ..game, rng: bumps.state })),
-			Ecs.Bundle.empty()
-				.add(at(origin.x + F32.cos(bearing.value) * distance.value, origin.y + F32.sin(bearing.value) * distance.value))
-				.add(Velocity.({ x: F32.cos(course.value) * speed, y: F32.sin(course.value) * speed }))
-				.add(Heading.(0))
-				.add(Spin.(spin.value))
-				.add(Collider.(radius))
-				.add(Outline.({ points: corners, color: Color.from_hex_rgb(0xb9c2d6) }))
-				.add(Asteroid.(size)),
-		).0
-	}
-	Err(_) => world
+spawn_rock = |world, size, origin, near, far| {
+	Game.(game) = world.resource()
+	bearing = Random.step(game.rng, Random.f32(0, tau))
+	distance = Random.next(bearing, Random.f32(near, far))
+	course = Random.next(distance, Random.f32(0, tau))
+	pace = Random.next(course, Random.f32(0.6, 1.4))
+	spin = Random.next(pace, Random.f32(-1.2, 1.2))
+	bumps = Random.next(spin, Random.list(Random.f32(0.72, 1), 10))
+	speed = speed_of(size) * pace.value
+	radius = radius_of(size)
+	corners = bumps.value.fold(
+		[],
+		|points, bump| {
+			angle = U64.to_f32(points.len()) * tau / 10
+			points.append({ x: F32.cos(angle) * radius * bump, y: F32.sin(angle) * radius * bump })
+		},
+	)
+	Ecs.World.spawn(
+		set_game(world, { ..game, rng: bumps.state }),
+		Ecs.Bundle.empty()
+			.add(at(origin.x + F32.cos(bearing.value) * distance.value, origin.y + F32.sin(bearing.value) * distance.value))
+			.add(Velocity.({ x: F32.cos(course.value) * speed, y: F32.sin(course.value) * speed }))
+			.add(Heading.(0))
+			.add(Spin.(spin.value))
+			.add(Collider.(radius))
+			.add(Outline.({ points: corners, color: Color.from_hex_rgb(0xb9c2d6) }))
+			.add(Asteroid.(size)),
+	).0
 }
 
 spawn_rocks = |world, count, size, origin, near, far|
@@ -265,7 +262,8 @@ shoot = |world| {
 
 ## Scores a rock and replaces it with two of the next size down.
 break_up = |world, rock| {
-	scored = world.despawn(rock.entity).ok_or(world).map1(|Game.(game)| Game.({ ..game, score: game.score + points_for(rock.size) }))
+	Game.(game) = world.resource()
+	scored = set_game(world.despawn(rock.entity).ok_or(world), { ..game, score: game.score + points_for(rock.size) })
 	match rock.size {
 		Large => spawn_rocks(scored, 2, Medium, rock.at, 0, 14)
 		Medium => spawn_rocks(scored, 2, Small, rock.at, 0, 8)
@@ -281,53 +279,51 @@ wreck = |world| {
 		|(_, position, Ship.(ship))| ship.shield <= 0 and boulders.any(|rock| near(Position.get(position), rock.at, radius_of(rock.size) + ship_radius)),
 	)
 	if wrecked {
-		match world.single() {
-			Ok(Game.(game)) => {
-				left = game.lives - 1
-				cleared = despawn_all(world, ships(world)).map1(|Game.(_)| Game.({ ..game, lives: left, over: left == 0 }))
-				if left == 0 cleared else spawn_ship(cleared)
-			}
-			Err(_) => world
-		}
+		Game.(game) = world.resource()
+		left = game.lives - 1
+		cleared = set_game(despawn_all(world, ships(world)), { ..game, lives: left, over: left == 0 })
+		if left == 0 cleared else spawn_ship(cleared)
 	} else {
 		world
 	}
 }
 
 ## Once the last rock is gone, a bigger wave arrives around the ship.
-next_wave = |world| match world.single() {
-	Ok(Game.(game)) if !game.over and rocks(world).is_empty() => {
+next_wave = |world| {
+	Game.(game) = world.resource()
+	if !game.over and rocks(world).is_empty() {
 		origin = world.query2().fold(center, |_, (_, position, Ship.(_))| Position.get(position))
-		spawn_rocks(world.map1(|Game.(_)| Game.({ ..game, wave: game.wave + 1 })), game.wave + 4, Large, origin, 230, 300)
+		spawn_rocks(set_game(world, { ..game, wave: game.wave + 1 }), game.wave + 4, Large, origin, 230, 300)
+	} else {
+		world
 	}
-	_ => world
 }
 
 ## Enter starts over once the game has ended.
-restart = |world| match world.single() {
-	Ok(Game.(game)) if game.over and pressed(world, KeyEnter) => {
+restart = |world| {
+	Game.(game) = world.resource()
+	if game.over and pressed(world, KeyEnter) {
 		debris = rocks(world).map(|rock| rock.entity).concat(world.query1().map(|(entity, Bullet.(_))| entity))
-		spawn_ship(despawn_all(world, debris).map1(|Game.(_)| Game.({ score: 0, lives: 3, wave: 0, over: Bool.False, rng: game.rng })))
+		spawn_ship(set_game(despawn_all(world, debris), { score: 0, lives: 3, wave: 0, over: Bool.False, rng: game.rng }))
+	} else {
+		world
 	}
-	_ => world
 }
 
 ## A shielded ship flickers.
 blink = |world| {
-	found : Try(Clock, _)
-	found = world.single()
-	lit = match found {
-		Ok(clock) => F32.sin(Clock.get(clock).total * 24) > 0
-		Err(_) => Bool.True
-	}
+	clock : Clock
+	clock = world.resource()
+	lit = F32.sin(clock.get().total * 24) > 0
 	world.map_with(
 		|Outline.(outline), Ship.(ship)| Outline.({ ..outline, color: if ship.shield > 0 and !lit Color.with_alpha(Color.white, 60) else Color.white }),
 	)
 }
 
 ## Writes the score, the ships left and the banner into their labels.
-hud = |world| match world.single() {
-	Ok(Game.(game)) => world.map_with(
+hud = |world| {
+	Game.(game) = world.resource()
+	world.map_with(
 		|label, Hud.(part)| Label.(
 			{
 				..Label.get(label),
@@ -339,7 +335,6 @@ hud = |world| match world.single() {
 			},
 		),
 	)
-	Err(_) => world
 }
 
 ## Draws every `Outline`, turned to its `Heading`, over what `RayEcs` drew.
@@ -365,32 +360,26 @@ outlines = |world| world.query3().map(
 
 # Helpers
 
+## Replaces the `Game` resource.
+set_game = |world, game| world.map_resources(|res| { ..res, game: Game.(game) })
+
 ## Seconds since the previous update.
 seconds = |world| {
-	found : Try(Clock, _)
-	found = world.single()
-	match found {
-		Ok(clock) => Clock.get(clock).dt
-		Err(_) => 0
-	}
+	clock : Clock
+	clock = world.resource()
+	clock.get().dt
 }
 
 held = |world, key| {
-	found : Try(Keyboard, _)
-	found = world.single()
-	match found {
-		Ok(keyboard) => keyboard.down(key)
-		Err(_) => Bool.False
-	}
+	keyboard : Keyboard
+	keyboard = world.resource()
+	keyboard.down(key)
 }
 
 pressed = |world, key| {
-	found : Try(Keyboard, _)
-	found = world.single()
-	match found {
-		Ok(keyboard) => keyboard.pressed(key)
-		Err(_) => Bool.False
-	}
+	keyboard : Keyboard
+	keyboard = world.resource()
+	keyboard.pressed(key)
 }
 
 near = |a, b, reach| (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) < reach * reach
@@ -493,16 +482,10 @@ Bullet := F32.{
 	}
 }
 
-## The one entity that keeps score. `rng` is where every random number in the
+## The resource that keeps score. `rng` is where every random number in the
 ## game comes from, so a seed decides a whole run.
 Game := { score : U64, lives : U64, wave : U64, over : Bool, rng : Random.State }.{
-	to_col : List(Game) -> [Games(List(Game))]
-	to_col = |list| Games(list)
-
-	from_col = |col| match col {
-		Games(list) => Ok(list)
-		_ => Err(WrongColumn)
-	}
+	from_res = |res| res.game
 }
 
 ## Marks a `Label` that `hud` keeps up to date, and says with what.
@@ -519,7 +502,7 @@ Hud := [Score, Lives, Banner].{
 # Tests
 
 ## A world as it is after `init!`, before the first update.
-fresh = || RayEcs.spawn_devices(scene(Text.font_stub, Random.seed(7)))
+fresh = || scene(Text.font_stub, Random.seed(7))
 
 ## One update's worth of input: `seconds` long, with these keys held.
 tick = |world, dt, keys| {
@@ -533,14 +516,14 @@ tick = |world, dt, keys| {
 ## A world with no shield left on the ship.
 unshielded = |world| world.map1(|Ship.(ship)| Ship.({ ..ship, shield: 0 }))
 
-score = |world| match world.single() {
-	Ok(Game.(game)) => game.score
-	Err(_) => 0
+score = |world| {
+	Game.(game) = world.resource()
+	game.score
 }
 
-lives = |world| match world.single() {
-	Ok(Game.(game)) => game.lives
-	Err(_) => 0
+lives = |world| {
+	Game.(game) = world.resource()
+	game.lives
 }
 
 sizes = |world| rocks(world).map(|rock| rock.size)
@@ -605,7 +588,9 @@ expect {
 
 # Losing the last ship ends the game, and Enter starts a new one.
 expect {
-	last = spawn_rock(fresh(), Large, center, 0, 1).map1(|Game.(game)| Game.({ ..game, lives: 1, score: 70 }))
+	rocky = spawn_rock(fresh(), Large, center, 0, 1)
+	Game.(game) = rocky.resource()
+	last = set_game(rocky, { ..game, lives: 1, score: 70 })
 	over = hud(wreck(unshielded(last)))
 	banner = |world| world.query2().keep_if(|(_, _, Hud.(part))| part == Banner).map(|(_, label, _)| Label.get(label).text)
 	input : App.Input([])

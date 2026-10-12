@@ -22,7 +22,7 @@ import ecs.Ecs
 ##
 ## ```roc
 ## world = RayEcs.default(
-##     Ecs.World.empty()
+##     Ecs.World.empty({ ray: RayEcs.resources })
 ##         .spawn4(Position.({ x: 20, y: 20 }), Size.({ width: 200, height: 80 }), FillColor.(Color.blue), BorderColor.(Color.white))
 ##         .add_system(move),
 ## )
@@ -34,6 +34,13 @@ import ecs.Ecs
 ##
 ## More systems are added to a `RayEcs.World` with its `add_input` and
 ## `add_output`.
+##
+## The world's resources are a record with a `ray` field for `RayEcs` to keep
+## the devices in, next to whatever fields the app wants for itself:
+##
+## ```roc
+## Ecs.World.empty({ ray: RayEcs.resources, score: Score.(0) })
+## ```
 ##
 ## What gets drawn. A `Layer` decides the order, lowest first; within a layer
 ## it is the order of this table:
@@ -54,18 +61,19 @@ RayEcs :: [].{
 	## `Draw.Frame` of a `render!`.
 	##
 	## col -> tag union of the component columns
+	## res -> the app's own fields of the resource record, without `ray`
 	## msg -> the app's task message type
-	World(col, msg) := {
-		inner : Ecs.World(col),
-		input_systems : List(InputSystem(col, msg)),
-		output_systems : List(DrawSystem(col, msg)),
+	World(col, res, msg) := {
+		inner : Ecs.World(col, { ray : Resources, ..res }),
+		input_systems : List(InputSystem(col, res, msg)),
+		output_systems : List(DrawSystem(col, res, msg)),
 	}.{
 
 		## A world with no input or output systems of its own.
-		new : Ecs.World(col) -> World(col, msg)
+		new : Ecs.World(col, { ray : Resources, ..res }) -> World(col, res, msg)
 		new = |world| World.({ inner: world, input_systems: [], output_systems: [] })
 
-		add_input : World(col, msg), InputSystem(col, msg) -> World(col, msg)
+		add_input : World(col, res, msg), InputSystem(col, res, msg) -> World(col, res, msg)
 		add_input = |world, system| World.(
 			{
 				inner: world.inner,
@@ -74,7 +82,7 @@ RayEcs :: [].{
 			},
 		)
 
-		add_output : World(col, msg), DrawSystem(col, msg) -> World(col, msg)
+		add_output : World(col, res, msg), DrawSystem(col, res, msg) -> World(col, res, msg)
 		add_output = |world, system| World.(
 			{
 				inner: world.inner,
@@ -85,7 +93,7 @@ RayEcs :: [].{
 
 		## Feeds `input` through every input system, in the order they were
 		## added.
-		input! : World(col, msg), App.Input(msg) => Try(World(col, msg), [Exit(I64)])
+		input! : World(col, res, msg), App.Input(msg) => Try(World(col, res, msg), [Exit(I64)])
 		input! = |world, input| {
 			var $world = world
 			for system in world.input_systems {
@@ -95,7 +103,7 @@ RayEcs :: [].{
 		}
 
 		## Runs the inner world's systems once.
-		update : World(col, msg) -> World(col, msg)
+		update : World(col, res, msg) -> World(col, res, msg)
 		update = |world| World.(
 			{
 				inner: world.inner.update(),
@@ -105,7 +113,7 @@ RayEcs :: [].{
 		)
 
 		## Runs every output system, in the order they were added.
-		output! : World(col, msg), Draw.Frame => Try({}, [Exit(I64)])
+		output! : World(col, res, msg), Draw.Frame => Try({}, [Exit(I64)])
 		output! = |world, frame| {
 			for system in world.output_systems {
 				system(world, frame)?
@@ -116,48 +124,62 @@ RayEcs :: [].{
 
 	## Reads the host's input for this cycle. Runs in `update!`, before the
 	## world's own systems.
-	InputSystem(col, msg) : World(col, msg), App.Input(msg) => Try(World(col, msg), [Exit(I64)])
+	InputSystem(col, res, msg) : World(col, res, msg), App.Input(msg) => Try(World(col, res, msg), [Exit(I64)])
 
 	## Draws the world. Runs in `render!`, the only place drawing is legal.
-	DrawSystem(col, msg) : World(col, msg), Draw.Frame => Try({}, [Exit(I64)])
+	DrawSystem(col, res, msg) : World(col, res, msg), Draw.Frame => Try({}, [Exit(I64)])
 
 	## A world with no input or output systems of its own.
-	new : Ecs.World(col) -> World(col, msg)
+	new : Ecs.World(col, { ray : Resources, ..res }) -> World(col, res, msg)
 	new = |world| World.new(world)
 
-	## A world with a devices entity, kept current by `read_devices`, that
+	## A world whose devices are kept current by `read_devices`, and that
 	## draws its shapes with `draw!`.
-	default = |world| RayEcs.new(RayEcs.spawn_devices(world)).add_input(RayEcs.read_devices).add_output(RayEcs.draw!)
+	default = |world| RayEcs.new(world).add_input(RayEcs.read_devices).add_output(RayEcs.draw!)
 
 	## One `update!` cycle: every input system, then every system of the
 	## inner world.
-	update! : World(col, msg), App.Input(msg) => Try(World(col, msg), [Exit(I64)])
+	update! : World(col, res, msg), App.Input(msg) => Try(World(col, res, msg), [Exit(I64)])
 	update! = |world, input| Ok(world.input!(input)?.update())
 
 	## One `render!`: every output system, in the order they were added.
-	render! : World(col, msg), Draw.Frame => Try({}, [Exit(I64)])
+	render! : World(col, res, msg), Draw.Frame => Try({}, [Exit(I64)])
 	render! = |world, frame| world.output!(frame)
 
 	# Input
 
-	## Spawns the entity that holds the `Pointer`, the `Keyboard` and the
-	## `Clock`. Systems read them with `single`:
+	## What `RayEcs` keeps in the `ray` field of a world's resources: the
+	## `Pointer`, the `Keyboard` and the `Clock`. Systems read them with
+	## `resource`:
 	##
 	##     pointer : RayEcs.Pointer
-	##     pointer = world.single()?
-	spawn_devices = |world| world.spawn3(Pointer.(Devices.none.mouse), Keyboard.(Devices.none), Clock.({ dt: 0, total: 0 }))
+	##     pointer = world.resource()
+	Resources : { pointer : Pointer, keyboard : Keyboard, clock : Clock }
 
-	## The input system that keeps every `Pointer`, `Keyboard` and `Clock`
-	## current.
+	## The `ray` field to start a world with: no input yet, and a clock at 0.
+	resources : Resources
+	resources = { pointer: Pointer.(Devices.none.mouse), keyboard: Keyboard.(Devices.none), clock: Clock.({ dt: 0, total: 0 }) }
+
+	## The input system that keeps the `Pointer`, the `Keyboard` and the
+	## `Clock` current.
 	read_devices = |world, input| Ok(World.({ ..world, inner: RayEcs.write_devices(world.inner, input) }))
 
 	## `read_devices` on the `Ecs.World` inside.
 	write_devices = |world, input| {
 		dt = input.time.elapsed_seconds
-		world
-			.map1(|Pointer.(_)| Pointer.(input.devices.mouse))
-			.map1(|Keyboard.(_)| Keyboard.(input.devices))
-			.map1(|Clock.(clock)| Clock.({ dt: dt, total: clock.total + dt }))
+		world.map_resources(
+			|res| {
+				Clock.(clock) = res.ray.clock
+				{
+					..res,
+					ray: {
+						pointer: Pointer.(input.devices.mouse),
+						keyboard: Keyboard.(input.devices),
+						clock: Clock.({ dt: dt, total: clock.total + dt }),
+					},
+				}
+			},
+		)
 	}
 
 	# Drawing
@@ -303,19 +325,14 @@ RayEcs :: [].{
 	# that defines it, so each component has a `get` for everywhere else:
 	# `Radius.get(radius)`, or `radius.get()` once its type is known.
 
-	## The mouse as of the latest `update!`. Kept current by `read_devices` on
-	## every entity that has one; `spawn_devices` makes the usual single one.
+	## The mouse as of the latest `update!`. A resource, kept current by
+	## `read_devices`.
 	Pointer := Mouse.Snapshot.{
 		get : Pointer -> Mouse.Snapshot
 		get = |Pointer.(inner)| inner
 
-		to_col : List(Pointer) -> [Pointers(List(Pointer))]
-		to_col = |list| Pointers(list)
-
-		from_col = |col| match col {
-			Pointers(list) => Ok(list)
-			_ => Err(WrongColumn)
-		}
+		from_res : { ray : Resources, ..res } -> Pointer
+		from_res = |res| res.ray.pointer
 
 		position : Pointer -> { x : F32, y : F32 }
 		position = |Pointer.(mouse)| mouse.position()
@@ -340,18 +357,14 @@ RayEcs :: [].{
 		released = |Pointer.(mouse), button| mouse.button_released(button)
 	}
 
-	## The keys as of the latest `update!`. Kept current by `read_devices`.
+	## The keys as of the latest `update!`. A resource, kept current by
+	## `read_devices`.
 	Keyboard := Devices.Snapshot.{
 		get : Keyboard -> Devices.Snapshot
 		get = |Keyboard.(inner)| inner
 
-		to_col : List(Keyboard) -> [Keyboards(List(Keyboard))]
-		to_col = |list| Keyboards(list)
-
-		from_col = |col| match col {
-			Keyboards(list) => Ok(list)
-			_ => Err(WrongColumn)
-		}
+		from_res : { ray : Resources, ..res } -> Keyboard
+		from_res = |res| res.ray.keyboard
 
 		## Held right now.
 		down : Keyboard, Keys.Key -> Bool
@@ -366,19 +379,14 @@ RayEcs :: [].{
 		released = |Keyboard.(devices), key| devices.key_released(key)
 	}
 
-	## Seconds since the previous cycle, and since the clock was spawned. Kept
-	## current by `read_devices`.
+	## Seconds since the previous cycle, and since the world was made. A
+	## resource, kept current by `read_devices`.
 	Clock := { dt : F32, total : F32 }.{
 		get : Clock -> { dt : F32, total : F32 }
 		get = |Clock.(inner)| inner
 
-		to_col : List(Clock) -> [Clocks(List(Clock))]
-		to_col = |list| Clocks(list)
-
-		from_col = |col| match col {
-			Clocks(list) => Ok(list)
-			_ => Err(WrongColumn)
-		}
+		from_res : { ray : Resources, ..res } -> Clock
+		from_res = |res| res.ray.clock
 	}
 
 	## Optional: when an entity is drawn. Lower layers are drawn first, so
@@ -592,7 +600,7 @@ fill = RayEcs.FillColor.(Color.blue)
 border = RayEcs.BorderColor.(Color.white)
 
 ## Two boxes, a rounded box, and a box with no border.
-boxes = || Ecs.World.empty()
+boxes = || Ecs.World.empty({})
 	.spawn4(at(1, 1), sized(10, 10), fill, border)
 	.spawn(Ecs.Bundle.empty().add(at(2, 2)).add(sized(20, 20)).add(fill).add(border).add(RayEcs.BorderWidth.(3))).0
 	.spawn(Ecs.Bundle.empty().add(at(3, 3)).add(sized(30, 30)).add(fill).add(border).add(RayEcs.CornerRadius.(8))).0
@@ -610,7 +618,7 @@ expect RayEcs.rounded_rectangles(boxes()) == [
 ]
 
 expect {
-	world = Ecs.World.empty()
+	world = Ecs.World.empty({})
 		.spawn3(at(1, 1), RayEcs.Radius.(5), fill)
 		.spawn4(at(2, 2), RayEcs.Radius.(6), fill, border)
 		.spawn2(at(3, 3), RayEcs.Radius.(7))
@@ -621,7 +629,7 @@ expect {
 }
 
 expect {
-	world = Ecs.World.empty()
+	world = Ecs.World.empty({})
 		.spawn3(at(1, 1), sized(10, 20), RayEcs.Gradient.(TopToBottom(Color.red, Color.blue)))
 		.spawn3(at(2, 2), sized(30, 40), RayEcs.Gradient.(LeftToRight(Color.red, Color.blue)))
 		.spawn3(at(3, 3), RayEcs.Radius.(9), RayEcs.RadialGradient.({ inner: Color.red, outer: Color.blue }))
@@ -635,7 +643,7 @@ expect {
 # A label is anchored at its top left corner unless it has a `TextAlign`.
 expect {
 	label = |text| RayEcs.Label.({ text: text, size: 20, font: Text.font_stub })
-	world = Ecs.World.empty()
+	world = Ecs.World.empty({})
 		.spawn3(at(1, 1), label("hi"), RayEcs.TextColor.(Color.white))
 		.spawn4(at(2, 2), label("centered"), RayEcs.TextColor.(Color.white), RayEcs.TextAlign.((Middle, Center)))
 		.spawn2(at(3, 3), label("no color"))
@@ -648,14 +656,14 @@ expect {
 }
 
 expect {
-	world = Ecs.World.empty().spawn3(at(1, 1), RayEcs.FpsCounter.(32), RayEcs.TextColor.(Color.white))
+	world = Ecs.World.empty({}).spawn3(at(1, 1), RayEcs.FpsCounter.(32), RayEcs.TextColor.(Color.white))
 	RayEcs.fps_counters(world) == [(0, Fps({ pos: { x: 1, y: 1 }, size: 32, color: Color.white }))]
 }
 
 # Layers decide the order across kinds of shape; within a layer a rectangle is
 # drawn before a circle, whichever was spawned first.
 expect {
-	world = Ecs.World.empty()
+	world = Ecs.World.empty({})
 		.spawn4(at(1, 1), RayEcs.Radius.(1), fill, RayEcs.Layer.(1))
 		.spawn3(at(2, 2), RayEcs.Radius.(2), fill)
 		.spawn(Ecs.Bundle.empty().add(at(3, 3)).add(sized(3, 3)).add(fill).add(border).add(RayEcs.Layer.(2))).0
@@ -676,12 +684,12 @@ expect {
 	input = App.Input.for_tests({})
 		.with_devices(Devices.none.with_mouse_position({ x: 30, y: 40 }).with_mouse_button_pressed(Left).with_key_down(KeySpace))
 		.with_time({ cycle_count: 1, simulation_nanos: 0, monotonic_nanos: 0, elapsed_seconds: 0.5 })
-	world = RayEcs.write_devices(RayEcs.write_devices(RayEcs.spawn_devices(Ecs.World.empty()), input), input)
+	world = RayEcs.write_devices(RayEcs.write_devices(Ecs.World.empty({ ray: RayEcs.resources, kept: "app" }), input), input)
 	pointer : RayEcs.Pointer
-	pointer = world.single()?
+	pointer = world.resource()
 	keyboard : RayEcs.Keyboard
-	keyboard = world.single()?
-	RayEcs.Clock.(clock) = world.single()?
+	keyboard = world.resource()
+	RayEcs.Clock.(clock) = world.resource()
 	pointer.position() == { x: 30, y: 40 }
 		and pointer.pressed(Left) and !pointer.down(Right)
 			and keyboard.down(KeySpace) and !keyboard.down(KeyEnter)
