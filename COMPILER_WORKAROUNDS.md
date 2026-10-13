@@ -135,3 +135,52 @@ annotation is the first thing to look for.
 **Recheck.** Remove the `to_col` annotation from `Follower` in
 `examples/ray-basics.roc` and run `roc check examples/ray-basics.roc` with a time limit. If it finishes, both annotations
 are optional.
+
+## 5. A generic function's error union does not widen through a closure
+
+**What fails.** An annotated function can return a narrower error union than
+its caller declares, and `?` widens it. That stops working when the function
+is generic and is called from a closure handed to another function:
+
+```roc
+Fault : [OutOfBounds, WrongColumn, TooManyEntities]
+
+grow : Column(col), Column(col) -> Try(Column(col), [WrongColumn])
+
+append : List(Column(col)), Column(col) -> Try(List(Column(col)), Fault)
+append = |columns, cell| Ok(columns.map_try(|column| grow(column, cell))?)
+# This expression produces the tag OutOfBounds but the annotated tag union
+# does not list it.
+```
+
+The same code checks when `grow` is not generic (`U64 -> Try(U64,
+[WrongColumn])`), and wrapping the call as `|column| Ok(grow(column, cell)?)`
+does not help.
+
+**Workaround.** Everything that changes a world returns the one `Fault` union,
+including the closures in `Column`, so nothing has to widen. `grow` returns
+`Try(Column(col), Fault)` although the only fault it can produce is
+`WrongColumn`.
+
+**Recheck.** Change `grow`'s annotation in `package/Ecs.roc` to end in
+`[WrongColumn]` and run `roc check package/main.roc`. If it passes, the helpers
+can go back to listing only the errors they can produce.
+
+## 6. Static dispatch on a type variable crashes inside a closure passed along
+
+**What fails.** In `World.take`, this checked but crashed when the test ran,
+with `dispatch on a value that can never exist`:
+
+```roc
+take = |World.(world), entity| {
+    C : c
+    ...
+    without = |row| row.drop_if(|cell| C.from_col(cell.data).is_ok())
+    moved = sound(migrate(world.archetypes, world.slots, entity, seat, without))
+```
+
+**Workaround.** `take` builds a `Column` from the component it took and uses
+its `matches` closure, which was made where the type was known.
+
+**Recheck.** Put the `C.from_col` version back and run
+`roc test package/main.roc`.
