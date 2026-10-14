@@ -49,51 +49,7 @@ cannot write `|Position.(p)|` for a `RayEcs` component.
 run `roc check examples/ray-basics.roc`. If it passes, the `get` functions and
 the `_position` style arguments can be replaced with patterns.
 
-## 2. A method cannot be called on a value whose type is not known yet
-
-**What fails.** `value.method()` needs the type of `value` to already be
-resolved. `World.resource`, `World.single` and `World.get` return whichever
-type the caller expects, so calling a method on their result directly gives
-the compiler nothing to go on:
-
-```roc
-world.resource().position()
-# This is trying to dispatch a method named from_res on an unresolved type variable
-```
-
-**Workarounds.** Either of these was confirmed to compile:
-
-```roc
-# annotate the result first (what ray-basics.roc does)
-pointer : Pointer
-pointer = world.resource()
-
-# or call the function by its qualified name instead of as a method
-Pointer.position(world.resource())
-```
-
-This one is how static dispatch is specified rather than a bug, so it is
-unlikely to change.
-
-## 3. Effectful functions cannot be called from `expect`
-
-**What fails.** An `expect` cannot call a function with `=>` in its type, and
-`Draw.Frame` only exists inside `render!`. This is stated in the RocRay
-platform's own documentation (`App.Input.for_tests`); it was not probed
-separately here.
-
-**Workaround.** The logic lives in pure functions and the effectful ones are
-thin shells around them:
-
-| Effectful             | Pure, tested with `expect`                            |
-| --------------------- | ----------------------------------------------------- |
-| `RayEcs.draw!`        | `RayEcs.scene`, which returns every draw call as data |
-| `RayEcs.read_devices` | `RayEcs.write_devices`                                |
-
-Nothing asserts that `draw!` issues the calls `scene` returns; that part is
-only exercised by running the app.
-
-## 4. A component with neither method annotated hangs the compiler
+## 2. A component with neither method annotated hangs the compiler
 
 **Status.** This affects the compiler that roc-ray 0.10.0 pins
 (`nightly-2026-09-27-a3ce7f1`), so the examples that run on RocRay keep the
@@ -136,7 +92,7 @@ annotation is the first thing to look for.
 `examples/ray-basics.roc` and run `roc check examples/ray-basics.roc` with a time limit. If it finishes, both annotations
 are optional.
 
-## 5. A generic function's error union does not widen through a closure
+## 3. A generic function's error union does not widen through a closure
 
 **What fails.** An annotated function can return a narrower error union than
 its caller declares, and `?` widens it. That stops working when the function
@@ -166,7 +122,7 @@ including the closures in `Column`, so nothing has to widen. `grow` returns
 `[WrongColumn]` and run `roc check package/main.roc`. If it passes, the helpers
 can go back to listing only the errors they can produce.
 
-## 6. Static dispatch on a type variable crashes inside a closure passed along
+## 4. Static dispatch on a type variable crashes inside a closure passed along
 
 **What fails.** In `World.take`, this checked but crashed when the test ran,
 with `dispatch on a value that can never exist`:
