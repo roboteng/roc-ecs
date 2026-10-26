@@ -1,6 +1,6 @@
 app [Model, program] {
 	ecs: "../package/main.roc",
-	rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst",
+	rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.11.1/4NWnSt7bKCyVx4xDFH89pV11ekYbiGQ43kdjfZ9NBJQn.tar.zst",
 }
 
 import rr.App
@@ -366,19 +366,19 @@ set_game = |world, game| world.map_resources(|res| { ..res, game: Game.(game) })
 ## Seconds since the previous update.
 seconds = |world| {
 	clock : Clock
-	clock = world.resource()
+	clock = Ecs.World.resource(world)
 	clock.get().dt
 }
 
 held = |world, key| {
 	keyboard : Keyboard
-	keyboard = world.resource()
+	keyboard = Ecs.World.resource(world)
 	keyboard.down(key)
 }
 
 pressed = |world, key| {
 	keyboard : Keyboard
-	keyboard = world.resource()
+	keyboard = Ecs.World.resource(world)
 	keyboard.pressed(key)
 }
 
