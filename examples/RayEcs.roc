@@ -212,10 +212,10 @@ RayEcs :: [].{
 			.concat(RayEcs.circles(world))
 			.concat(RayEcs.labels(world))
 			.concat(RayEcs.fps_counters(world))
-		layers = commands.fold([], |seen, (layer, _)| if seen.contains(layer) seen else seen.append(layer)).sort_by(|layer| layer)
+		layers = commands.fold([], |seen, (layer, _)| if (seen.contains(layer)) seen else seen.append(layer)).sort_by(|layer| layer)
 		layers.fold(
 			[],
-			|drawn, layer| commands.fold(drawn, |acc, (at, command)| if at == layer acc.append(command) else acc),
+			|drawn, layer| commands.fold(drawn, |acc, (at, command)| if (at == layer) acc.append(command) else acc),
 		)
 	}
 
@@ -692,6 +692,6 @@ expect {
 	RayEcs.Clock.(clock) = world.resource()
 	pointer.position() == { x: 30, y: 40 }
 		and pointer.pressed(Left) and !pointer.down(Right)
-			and keyboard.down(KeySpace) and !keyboard.down(KeyEnter)
-				and clock.dt == 0.5 and clock.total == 1
+		and keyboard.down(KeySpace) and !keyboard.down(KeyEnter)
+		and clock.dt == 0.5 and clock.total == 1
 }

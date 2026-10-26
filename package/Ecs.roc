@@ -496,13 +496,13 @@ narrow = |selection, keep| Ecs.Selection.(
 gather : Ecs.Selection(col), (Archetype(col) -> List(row)) -> List(row)
 gather = |selection, rows_of| List.map2(selection.mask, selection.archetypes, |selected, arch| (selected, arch)).fold(
 	[],
-	|rows, (selected, arch)| if selected rows.concat(rows_of(arch)) else rows,
+	|rows, (selected, arch)| if (selected) rows.concat(rows_of(arch)) else rows,
 )
 
 rewrite : Ecs.Selection(col), (Archetype(col) -> Archetype(col)) -> Ecs.Selection(col)
 rewrite = |selection, fn| Ecs.Selection.(
 	{
-		archetypes: List.map2(selection.mask, selection.archetypes, |selected, arch| if selected fn(arch) else arch),
+		archetypes: List.map2(selection.mask, selection.archetypes, |selected, arch| if (selected) fn(arch) else arch),
 		mask: selection.mask,
 	},
 )
@@ -792,9 +792,9 @@ expect {
 	(world4, fourth) = world3.spawn(Ecs.Bundle.empty().add(pos(4, 4)))
 	world2.despawned == [first, second] and world2.len() == 0 and world2.despawn(first).is_err()
 		and third.id == second.id and third.gen == second.gen + 1
-			and fourth.id == first.id and fourth.gen == first.gen + 1
-				and world4.despawned == [] and positions(world4) == [(3, 3), (4, 4)]
-					and !world4.is_alive(first) and !world4.is_alive(second)
+		and fourth.id == first.id and fourth.gen == first.gen + 1
+		and world4.despawned == [] and positions(world4) == [(3, 3), (4, 4)]
+		and !world4.is_alive(first) and !world4.is_alive(second)
 }
 
 expect {

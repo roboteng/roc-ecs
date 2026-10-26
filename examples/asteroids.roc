@@ -177,13 +177,13 @@ spawn_rocks = |world, count, size, origin, near, far|
 # Systems
 
 ## Ends the app when Escape goes down.
-quit_on_escape = |world, _input| if pressed(world.inner, KeyEscape) Err(Exit(0)) else Ok(world)
+quit_on_escape = |world, _input| if (pressed(world.inner, KeyEscape)) Err(Exit(0)) else Ok(world)
 
 ## A and D turn the ship, W pushes it the way it points.
 steer = |world| {
 	dt = seconds(world)
-	turn = (if held(world, KeyD) turn_rate * dt else 0) - (if held(world, KeyA) turn_rate * dt else 0)
-	push = if held(world, KeyW) thrust * dt else 0
+	turn = (if (held(world, KeyD)) turn_rate * dt else 0) - (if (held(world, KeyA)) turn_rate * dt else 0)
+	push = if (held(world, KeyW)) thrust * dt else 0
 	slow = 1 - drag * dt
 	world
 		.map_with(|Heading.(angle), Ship.(_)| Heading.(angle + turn))
@@ -212,7 +212,7 @@ fire = |world| {
 						.add(Bullet.(bullet_life)),
 				).0
 			},
-		).map1(|Ship.(ship)| if ship.cooldown > 0 Ship.(ship) else Ship.({ ..ship, cooldown: fire_delay }))
+		).map1(|Ship.(ship)| if (ship.cooldown > 0) Ship.(ship) else Ship.({ ..ship, cooldown: fire_delay }))
 	} else {
 		cooled
 	}
@@ -282,7 +282,7 @@ wreck = |world| {
 		Game.(game) = world.resource()
 		left = game.lives - 1
 		cleared = set_game(despawn_all(world, ships(world)), { ..game, lives: left, over: left == 0 })
-		if left == 0 cleared else spawn_ship(cleared)
+		if (left == 0) cleared else spawn_ship(cleared)
 	} else {
 		world
 	}
@@ -316,7 +316,7 @@ blink = |world| {
 	clock = world.resource()
 	lit = F32.sin(clock.get().total * 24) > 0
 	world.map_with(
-		|Outline.(outline), Ship.(ship)| Outline.({ ..outline, color: if ship.shield > 0 and !lit Color.with_alpha(Color.white, 60) else Color.white }),
+		|Outline.(outline), Ship.(ship)| Outline.({ ..outline, color: if (ship.shield > 0 and !lit) Color.with_alpha(Color.white, 60) else Color.white }),
 	)
 }
 
@@ -330,7 +330,7 @@ hud = |world| {
 				text: match part {
 					Score => "Score ${U64.to_str(game.score)}"
 					Lives => "Ships ${U64.to_str(game.lives)}"
-					Banner => if game.over "GAME OVER  -  Enter plays again" else ""
+					Banner => if (game.over) "GAME OVER  -  Enter plays again" else ""
 				},
 			},
 		),
@@ -537,7 +537,7 @@ expect {
 	world = next_wave(fresh())
 	sizes(world) == [Large, Large, Large, Large]
 		and rocks(world).all(|rock| !near(rock.at, center, 200))
-			and rocks(next_wave(world)).len() == 4
+		and rocks(next_wave(world)).len() == 4
 }
 
 # Thrust pushes the ship the way it points: up, to begin with.
