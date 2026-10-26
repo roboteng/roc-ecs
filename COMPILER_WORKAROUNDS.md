@@ -52,51 +52,7 @@ the `_position` style arguments can be replaced with patterns.
 **Status.** The recheck passes on `nightly-2026-10-21-5349569`, so this
 workaround can go.
 
-## 2. A method cannot be called on a value whose type is not known yet
-
-**What fails.** `value.method()` needs the type of `value` to already be
-resolved. `World.resource`, `World.single` and `World.get` return whichever
-type the caller expects, so calling a method on their result directly gives
-the compiler nothing to go on:
-
-```roc
-world.resource().position()
-# This is trying to dispatch a method named from_res on an unresolved type variable
-```
-
-**Workarounds.** Either of these was confirmed to compile:
-
-```roc
-# annotate the result first (what ray-basics.roc does)
-pointer : Pointer
-pointer = world.resource()
-
-# or call the function by its qualified name instead of as a method
-Pointer.position(world.resource())
-```
-
-This one is how static dispatch is specified rather than a bug, so it is
-unlikely to change.
-
-## 3. Effectful functions cannot be called from `expect`
-
-**What fails.** An `expect` cannot call a function with `=>` in its type, and
-`Draw.Frame` only exists inside `render!`. This is stated in the RocRay
-platform's own documentation (`App.Input.for_tests`); it was not probed
-separately here.
-
-**Workaround.** The logic lives in pure functions and the effectful ones are
-thin shells around them:
-
-| Effectful             | Pure, tested with `expect`                            |
-| --------------------- | ----------------------------------------------------- |
-| `RayEcs.draw!`        | `RayEcs.scene`, which returns every draw call as data |
-| `RayEcs.read_devices` | `RayEcs.write_devices`                                |
-
-Nothing asserts that `draw!` issues the calls `scene` returns; that part is
-only exercised by running the app.
-
-## 4. A component with neither method annotated hangs the compiler
+## 2. A component with neither method annotated hangs the compiler
 
 **Status.** Fixed. This affected the compiler that roc-ray 0.10.0 pinned
 (`nightly-2026-09-27-a3ce7f1`). roc-ray 0.11 pins no compiler, and on
@@ -137,6 +93,64 @@ annotation is the first thing to look for.
 **Recheck.** Remove the `to_col` annotation from `Follower` in
 `examples/ray-basics.roc` and run `roc check examples/ray-basics.roc` with a time limit. If it finishes, both annotations
 are optional.
+
+## 3. A generic function's error union does not widen through a closure
+
+**What fails.** An annotated function can return a narrower error union than
+its caller declares, and `?` widens it. That stops working when the function
+is generic and is called from a closure handed to another function:
+
+```roc
+Fault : [OutOfBounds, WrongColumn, TooManyEntities]
+
+grow : Column(col), Column(col) -> Try(Column(col), [WrongColumn])
+
+append : List(Column(col)), Column(col) -> Try(List(Column(col)), Fault)
+append = |columns, cell| Ok(columns.map_try(|column| grow(column, cell))?)
+# This expression produces the tag OutOfBounds but the annotated tag union
+# does not list it.
+```
+
+The same code checks when `grow` is not generic (`U64 -> Try(U64,
+[WrongColumn])`), and wrapping the call as `|column| Ok(grow(column, cell)?)`
+does not help.
+
+**Workaround.** Everything that changes a world returns the one `Fault` union,
+including the closures in `Column`, so nothing has to widen. `grow` returns
+`Try(Column(col), Fault)` although the only fault it can produce is
+`WrongColumn`.
+
+**Recheck.** Change `grow`'s annotation in `package/Ecs.roc` to end in
+`[WrongColumn]` and run `roc check package/main.roc`. If it passes, the helpers
+can go back to listing only the errors they can produce.
+
+## 4. Static dispatch on a type variable crashes inside a closure passed along
+
+**What fails.** In `World.take`, this checked but crashed when the test ran,
+with `dispatch on a value that can never exist`:
+
+```roc
+take = |World.(world), entity| {
+    C : c
+    ...
+    without = |row| row.drop_if(|cell| C.from_col(cell.data).is_ok())
+    moved = sound(migrate(world.archetypes, world.slots, entity, seat, without))
+```
+
+**Workaround.** `take` builds a `Column` from the component it took and uses
+its `matches` closure, which was made where the type was known.
+
+It also happens outside `Ecs.roc`. In `bench/ops.roc`, a map through
+`world.select().without(Tag.to_col)` in a closure handed to the `moved` helper
+crashes the same way, both with `world.map_with_in(selection, fn)` and with
+the `selection.map_with(fn).apply_to(world)` API that came before it. With
+`having(Pos.to_col)` in its place, or with no filter, it runs. A smaller app
+that hands the same call to a one-line `apply = |world, f| f(world)` does not
+crash, so what triggers it is not yet pinned down.
+
+**Recheck.** Put the `C.from_col` version back and run
+`roc test package/main.roc`. For the second case, put `without(Tag.to_col)`
+back in the `map_in` workload and run `roc test bench/ops.roc`.
 
 ## 5. A parameter of unknown type has one signature per method
 
