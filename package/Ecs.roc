@@ -188,20 +188,87 @@ Ecs :: [].{
 		single : World(col, res) -> Try(a, [NoMatch, ManyMatches]) where [a.Component(col)]
 		single = |world| world.select().single()
 
+		## Rewrites one component of every entity that has it.
 		map1 : World(col, res), (a -> a) -> World(col, res) where [a.Component(col)]
-		map1 = |world, fn| world.select().map1(fn).apply_to(world)
+		map1 = |world, fn| world.map1_in(world.select(), fn)
 
+		## Rewrites two components of every entity that has both.
 		map2 : World(col, res), (a, b -> (a, b)) -> World(col, res) where [a.Component(col), b.Component(col)]
-		map2 = |world, fn| world.select().map2(fn).apply_to(world)
+		map2 = |world, fn| world.map2_in(world.select(), fn)
 
 		map3 : World(col, res), (a, b, c -> (a, b, c)) -> World(col, res) where [a.Component(col), b.Component(col), c.Component(col)]
-		map3 = |world, fn| world.select().map3(fn).apply_to(world)
+		map3 = |world, fn| world.map3_in(world.select(), fn)
 
+		## Rewrites the first component while reading the second: the
+		## equivalent of a `(&mut A, &B)` query.
 		map_with : World(col, res), (a, b -> a) -> World(col, res) where [a.Component(col), b.Component(col)]
-		map_with = |world, fn| world.select().map_with(fn).apply_to(world)
+		map_with = |world, fn| world.map_with_in(world.select(), fn)
 
 		map_with2 : World(col, res), (a, b, c -> a) -> World(col, res) where [a.Component(col), b.Component(col), c.Component(col)]
-		map_with2 = |world, fn| world.select().map_with2(fn).apply_to(world)
+		map_with2 = |world, fn| world.map_with2_in(world.select(), fn)
+
+		## `map1` on only the archetypes a selection kept:
+		##
+		##     world.map1_in(world.select().without(Frozen.to_col), |Pos.(p)| ...)
+		##
+		## Only the selection's choice of archetypes is used, so the selection
+		## can come from an earlier version of this world. Archetypes the world
+		## has gained since are not selected.
+		map1_in : World(col, res), Selection(col), (a -> a) -> World(col, res) where [a.Component(col)]
+		map1_in = |World.(world), Selection.(selection), fn| {
+			mask = selection.mask
+			changed = sound(change_selected(world.archetypes, mask, |arch| plan1(arch, fn), |arch, index| map_column(arch, index, |la| Ok(la.map(fn)))))
+			World.({ archetypes: changed, slots: world.slots, despawned: world.despawned, systems: world.systems, resources: world.resources })
+		}
+
+		map2_in : World(col, res), Selection(col), (a, b -> (a, b)) -> World(col, res) where [a.Component(col), b.Component(col)]
+		map2_in = |World.(world), Selection.(selection), fn| {
+			mask = selection.mask
+			changed = sound(
+				change_selected(
+					world.archetypes,
+					mask,
+					|arch| plan2(arch, fn),
+					|arch, (ia, ib, out)| {
+						with_a = map_column(arch, ia, |_| Ok(out.map(|row| row.0)))?
+						map_column(with_a, ib, |_| Ok(out.map(|row| row.1)))
+					},
+				),
+			)
+			World.({ archetypes: changed, slots: world.slots, despawned: world.despawned, systems: world.systems, resources: world.resources })
+		}
+
+		map3_in : World(col, res), Selection(col), (a, b, c -> (a, b, c)) -> World(col, res) where [a.Component(col), b.Component(col), c.Component(col)]
+		map3_in = |World.(world), Selection.(selection), fn| {
+			mask = selection.mask
+			changed = sound(
+				change_selected(
+					world.archetypes,
+					mask,
+					|arch| plan3(arch, fn),
+					|arch, (ia, ib, ic, out)| {
+						with_a = map_column(arch, ia, |_| Ok(out.map(|row| row.0)))?
+						with_b = map_column(with_a, ib, |_| Ok(out.map(|row| row.1)))?
+						map_column(with_b, ic, |_| Ok(out.map(|row| row.2)))
+					},
+				),
+			)
+			World.({ archetypes: changed, slots: world.slots, despawned: world.despawned, systems: world.systems, resources: world.resources })
+		}
+
+		map_with_in : World(col, res), Selection(col), (a, b -> a) -> World(col, res) where [a.Component(col), b.Component(col)]
+		map_with_in = |World.(world), Selection.(selection), fn| {
+			mask = selection.mask
+			changed = sound(change_selected(world.archetypes, mask, |arch| plan_with(arch, fn), |arch, (index, lb)| map_column(arch, index, |la| zip_with(la, lb, fn))))
+			World.({ archetypes: changed, slots: world.slots, despawned: world.despawned, systems: world.systems, resources: world.resources })
+		}
+
+		map_with2_in : World(col, res), Selection(col), (a, b, c -> a) -> World(col, res) where [a.Component(col), b.Component(col), c.Component(col)]
+		map_with2_in = |World.(world), Selection.(selection), fn| {
+			mask = selection.mask
+			changed = sound(change_selected(world.archetypes, mask, |arch| plan_with2(arch, fn), |arch, (index, lb, lc)| map_column(arch, index, |la| zip_with2(la, lb, lc, fn))))
+			World.({ archetypes: changed, slots: world.slots, despawned: world.despawned, systems: world.systems, resources: world.resources })
+		}
 	}
 
 	## The archetypes of a world, narrowed to some of them.
@@ -211,30 +278,21 @@ Ecs :: [].{
 	## is for ones that must be absent. Both take a component's `to_col` to
 	## say which type they mean:
 	##
-	##     world.select().without(Frozen.to_col).map_with(|Pos.(p), Vel.(v)| ...).apply_to(world)
+	##     world.select().without(Frozen.to_col).query2()
 	##
-	## A selection holds only archetypes, so a map gives back a selection and
-	## `apply_to` puts the result into the world it was selected from.
+	## To change only the selected entities, hand the selection to one of the
+	## world's `_in` maps:
+	##
+	##     world.map_with_in(world.select().without(Frozen.to_col), |Pos.(p), Vel.(v)| ...)
+	##
+	## A map changes the world, not the selection: of the selection it only
+	## uses which archetypes were kept.
 	Selection(col) :: { archetypes : List(Archetype(col)), mask : List(Bool) }.{
 		having : Selection(col), (List(c) -> col) -> Selection(col) where [c.Component(col)]
 		having = |selection, witness| narrow(selection, |arch| holds(arch, witness))
 
 		without : Selection(col), (List(c) -> col) -> Selection(col) where [c.Component(col)]
 		without = |selection, witness| narrow(selection, |arch| !holds(arch, witness))
-
-		## The world with its archetypes replaced by the selection's, including
-		## the ones that were narrowed away. `world` has to be the one the
-		## selection came from, with nothing spawned or despawned since.
-		apply_to : Selection(col), World(col, res) -> World(col, res)
-		apply_to = |selection, world| World.(
-			{
-				archetypes: selection.archetypes,
-				slots: world.slots,
-				despawned: world.despawned,
-				systems: world.systems,
-				resources: world.resources,
-			},
-		)
 
 		## Number of entities in the selected archetypes.
 		count : Selection(col) -> U64
@@ -310,61 +368,6 @@ Ecs :: [].{
 			}
 		}
 
-		map1 : Selection(col), (a -> a) -> Selection(col) where [a.Component(col)]
-		map1 = |selection, fn| rewrite(
-			selection,
-			|arch| {
-				la = fetch(arch)?
-				store(arch, la.map(fn))
-			},
-		)
-
-		## Rewrites two components of every entity that has both.
-		map2 : Selection(col), (a, b -> (a, b)) -> Selection(col) where [a.Component(col), b.Component(col)]
-		map2 = |selection, fn| rewrite(
-			selection,
-			|arch| {
-				la = fetch(arch)?
-				lb = fetch(arch)?
-				out = List.map2(la, lb, fn)
-				store(store(arch, out.map(|row| row.0))?, out.map(|row| row.1))
-			},
-		)
-
-		map3 : Selection(col), (a, b, c -> (a, b, c)) -> Selection(col) where [a.Component(col), b.Component(col), c.Component(col)]
-		map3 = |selection, fn| rewrite(
-			selection,
-			|arch| {
-				la = fetch(arch)?
-				lb = fetch(arch)?
-				lc = fetch(arch)?
-				out = List.map3(la, lb, lc, fn)
-				store(store(store(arch, out.map(|row| row.0))?, out.map(|row| row.1))?, out.map(|row| row.2))
-			},
-		)
-
-		## Rewrites the first component while reading the second: the
-		## equivalent of a `(&mut A, &B)` query.
-		map_with : Selection(col), (a, b -> a) -> Selection(col) where [a.Component(col), b.Component(col)]
-		map_with = |selection, fn| rewrite(
-			selection,
-			|arch| {
-				la = fetch(arch)?
-				lb = fetch(arch)?
-				store(arch, List.map2(la, lb, fn))
-			},
-		)
-
-		map_with2 : Selection(col), (a, b, c -> a) -> Selection(col) where [a.Component(col), b.Component(col), c.Component(col)]
-		map_with2 = |selection, fn| rewrite(
-			selection,
-			|arch| {
-				la = fetch(arch)?
-				lb = fetch(arch)?
-				lc = fetch(arch)?
-				store(arch, List.map3(la, lb, lc, fn))
-			},
-		)
 	}
 }
 
@@ -540,26 +543,6 @@ fetch = |arch| {
 	)
 }
 
-store : Archetype(col), List(c) -> Try(Archetype(col), [Missing]) where [c.Component(col)]
-store = |arch, list| {
-	C : c
-	var $stored = Bool.False
-	var $columns = List.with_capacity(arch.columns.len())
-	for column in arch.columns {
-		if C.from_col(column.data).is_ok() {
-			$columns = $columns.append({ ..column, data: C.to_col(list) })
-			$stored = Bool.True
-		} else {
-			$columns = $columns.append(column)
-		}
-	}
-	if $stored {
-		Ok({ entities: arch.entities, columns: $columns })
-	} else {
-		Err(Missing)
-	}
-}
-
 holds : Archetype(col), (List(c) -> col) -> Bool where [c.Component(col)]
 holds = |arch, _witness| {
 	C : c
@@ -589,26 +572,151 @@ gather = |selection, rows_of| List.map2(selection.mask, selection.archetypes, |s
 	},
 )
 
-## Each selected archetype as `change` leaves it. An archetype that is
-## `Missing` a component `change` asked for stays as it is.
-rewrite : Ecs.Selection(col), (Archetype(col) -> Try(Archetype(col), [Missing])) -> Ecs.Selection(col)
-rewrite = |selection, change| Ecs.Selection.(
-	{
-		archetypes: List.map2(
-			selection.mask,
-			selection.archetypes,
-			|selected, arch| if selected {
-				match change(arch) {
-					Ok(changed) => changed
-					Err(Missing) => arch
+## Changes, in place, each archetype that `mask` selects and in which `plan`
+## finds what `apply` needs. An archetype past the end of `mask` was added
+## after the selection was made, and is not selected.
+##
+## `plan` only reads, so an archetype it finds `Missing` something in is left
+## as it was without having been taken out of the list. `apply` gets the
+## archetype with nothing else pointing at it.
+change_selected : List(Archetype(col)), List(Bool), (Archetype(col) -> Try(p, [Missing])), (Archetype(col), p -> Try(Archetype(col), Fault)) -> Try(List(Archetype(col)), Fault)
+change_selected = |archetypes, mask, plan, apply| {
+	var $archetypes = archetypes
+	var $index = 0
+	for selected in mask {
+		if selected {
+			match plan_at($archetypes, $index, plan)? {
+				Ok(planned) => {
+					$archetypes = try_update($archetypes, $index, { entities: [], columns: [] }, |arch| apply(arch, planned))?
 				}
-			} else {
-				arch
+				Err(Missing) => {}
+			}
+		}
+		$index = $index + 1
+	}
+	Ok($archetypes)
+}
+
+## `plan` run on one archetype, in a function of its own so that the
+## reference it reads through is let go of before the archetype is changed.
+## A selection from another world can be longer than this one's archetypes,
+## and an archetype that is not there has nothing to plan.
+plan_at : List(Archetype(col)), U64, (Archetype(col) -> Try(p, [Missing])) -> Try(Try(p, [Missing]), Fault)
+plan_at = |archetypes, index, plan| match archetypes.get(index) {
+	Ok(arch) => Ok(plan(arch))
+	Err(OutOfBounds) => Ok(Err(Missing))
+}
+
+## Takes the list out of the column at `index` and puts back what `change`
+## makes of it. With the list out of the column, `change` holds the only
+## reference to it, so `List.map` and the like reuse it.
+map_column : Archetype(col), U64, (List(c) -> Try(List(c), Fault)) -> Try(Archetype(col), Fault) where [c.Component(col)]
+map_column = |{ entities, columns }, index, change| {
+	C : c
+	spare = spare_at(columns, index)?
+	changed = try_update(
+		columns,
+		index,
+		spare,
+		|column| match C.from_col(column.data) {
+			Ok(list) => {
+				data = change(list)?
+				Ok({ ..column, data: C.to_col(data) })
+			}
+			Err(WrongColumn) => Err(WrongColumn)
+		},
+	)?
+	Ok({ entities: entities, columns: changed })
+}
+
+## `la` with each item replaced by what `fn` makes of it and the item in the
+## same row of `lb`.
+##
+## `List.map2` would say this without a fallback branch, but it always makes a
+## new list; this reuses `la` when nothing else holds it. With the lengths
+## checked first, the fallback cannot be taken.
+zip_with : List(a), List(b), (a, b -> a) -> Try(List(a), Fault)
+zip_with = |la, lb, fn| {
+	if la.len() != lb.len() {
+		return Err(OutOfBounds)
+	}
+	Ok(
+		la.map_with_index(
+			|a, row| match lb.get(row) {
+				Ok(b) => fn(a, b)
+				Err(OutOfBounds) => a
 			},
 		),
-		mask: selection.mask,
-	},
-)
+	)
+}
+
+zip_with2 : List(a), List(b), List(c), (a, b, c -> a) -> Try(List(a), Fault)
+zip_with2 = |la, lb, lc, fn| {
+	if la.len() != lb.len() or la.len() != lc.len() {
+		return Err(OutOfBounds)
+	}
+	Ok(
+		la.map_with_index(
+			|a, row| match (lb.get(row), lc.get(row)) {
+				(Ok(b), Ok(c)) => fn(a, b, c)
+				_ => a
+			},
+		),
+	)
+}
+
+## Where in `arch` the column for `a` is. `fn` is only there to say which
+## type `a` is.
+plan1 : Archetype(col), (a -> a) -> Try(U64, [Missing]) where [a.Component(col)]
+plan1 = |arch, _fn| {
+	A : a
+	arch.columns.find_first_index(|column| A.from_col(column.data).is_ok()).map_err(|_| Missing)
+}
+
+plan_with : Archetype(col), (a, b -> a) -> Try((U64, List(b)), [Missing]) where [a.Component(col), b.Component(col)]
+plan_with = |arch, _fn| {
+	A : a
+	index = arch.columns.find_first_index(|column| A.from_col(column.data).is_ok()).map_err(|_| Missing)?
+	lb = fetch(arch)?
+	Ok((index, lb))
+}
+
+plan_with2 : Archetype(col), (a, b, c -> a) -> Try((U64, List(b), List(c)), [Missing]) where [a.Component(col), b.Component(col), c.Component(col)]
+plan_with2 = |arch, _fn| {
+	A : a
+	index = arch.columns.find_first_index(|column| A.from_col(column.data).is_ok()).map_err(|_| Missing)?
+	lb = fetch(arch)?
+	lc = fetch(arch)?
+	Ok((index, lb, lc))
+}
+
+## For maps that write more than one component, the new rows are worked out
+## here, from lists the archetype still holds, and `apply` swaps them in. That
+## makes new lists, as `List.map2` always does.
+plan2 : Archetype(col), (a, b -> (a, b)) -> Try((U64, U64, List((a, b))), [Missing]) where [a.Component(col), b.Component(col)]
+plan2 = |arch, fn| {
+	A : a
+	B : b
+	ia = arch.columns.find_first_index(|column| A.from_col(column.data).is_ok()).map_err(|_| Missing)?
+	ib = arch.columns.find_first_index(|column| B.from_col(column.data).is_ok()).map_err(|_| Missing)?
+	la = fetch(arch)?
+	lb = fetch(arch)?
+	Ok((ia, ib, List.map2(la, lb, fn)))
+}
+
+plan3 : Archetype(col), (a, b, c -> (a, b, c)) -> Try((U64, U64, U64, List((a, b, c))), [Missing]) where [a.Component(col), b.Component(col), c.Component(col)]
+plan3 = |arch, fn| {
+	A : a
+	B : b
+	C : c
+	ia = arch.columns.find_first_index(|column| A.from_col(column.data).is_ok()).map_err(|_| Missing)?
+	ib = arch.columns.find_first_index(|column| B.from_col(column.data).is_ok()).map_err(|_| Missing)?
+	ic = arch.columns.find_first_index(|column| C.from_col(column.data).is_ok()).map_err(|_| Missing)?
+	la = fetch(arch)?
+	lb = fetch(arch)?
+	lc = fetch(arch)?
+	Ok((ia, ib, ic, List.map3(la, lb, lc, fn)))
+}
 
 ## The row's cells in the order of `columns`, which is what `append_row` takes.
 ## It is `ShapeMismatch` unless the two hold exactly the same components.
@@ -914,7 +1022,7 @@ expect {
 
 expect {
 	world = sample()
-	moved = world.select().without(Frozen.to_col).map_with(|Pos.(p), Vel.(v)| Pos.({ x: p.x + v.dx, y: p.y + v.dy })).apply_to(world)
+	moved = world.map_with_in(world.select().without(Frozen.to_col), |Pos.(p), Vel.(v)| Pos.({ x: p.x + v.dx, y: p.y + v.dy }))
 	positions(moved) == [(1, 1), (12, 10), (20, 20), (99, 99)]
 }
 
@@ -1086,4 +1194,30 @@ expect {
 	world2 = world1.insert(entity, vel(3, 3))?
 	Vel.(v) = world2.get(entity)?
 	v.dx == 3 and world2.archetypes.len() == 2 and movers(world2) == [(1, 3)]
+}
+
+expect {
+	world = sample().map_with2(|Pos.(p), Vel.(v), Name.(n)| Pos.({ x: p.x + v.dx + Str.count_utf8_bytes(n).to_i64_wrap(), y: p.y }))
+	positions(world) == [(0, 0), (13, 10), (20, 20), (99, 99)]
+}
+
+expect {
+	world = sample().map3(|Pos.(p), Vel.(v), Name.(n)| (Pos.({ x: v.dx, y: p.y }), Vel.({ dx: p.x, dy: v.dy }), Name.(Str.concat(n, "!"))))
+	world.query3().map(|(_, Pos.(p), Vel.(v), Name.(n))| (p.x, v.dx, n)) == [(2, 10, "b!")]
+}
+
+expect {
+	world = sample()
+	frozen = world.map1_in(world.select().having(Frozen.to_col), |Pos.(p)| Pos.({ x: p.x + 1, y: p.y }))
+	positions(frozen) == [(0, 0), (10, 10), (21, 20), (99, 99)]
+}
+
+# A selection only says which archetypes were kept, so it still works on a
+# later version of the world. Archetypes added since are not selected.
+expect {
+	world0 = sample()
+	movers_only = world0.select().having(Vel.to_col)
+	world1 = world0.spawn2(pos(50, 50), Frozen.({}))
+	world2 = world1.map1_in(movers_only, |Pos.(p)| Pos.({ x: p.x + 1, y: p.y }))
+	positions(world2) == [(1, 0), (11, 10), (21, 20), (99, 99), (50, 50)]
 }

@@ -72,6 +72,22 @@ each = |(world, entities), op| {
 	$world
 }
 
+## Runs `pass` over a new world `passes` times, where each pass should move
+## entity n by n along x. Gives the number of entities if they all ended up
+## where they should.
+moved = |count, pass| {
+	var $world = populate(count).0
+	var $pass = 0
+	while $pass < passes {
+		$world = pass($world)
+		$pass = $pass + 1
+	}
+	n = count.to_i64_wrap()
+	expected = (passes + 1) * (n * (n - 1) // 2)
+	got = $world.query1().fold(0, |sum, (_, Pos.(p))| sum + p.x)
+	if got == expected $world.len() else 0
+}
+
 ## Runs a workload and returns a number that says it did all of its work.
 run : Str, U64 -> Try(U64, [UnknownOp])
 run = |op, count| match op {
@@ -119,15 +135,14 @@ run = |op, count| match op {
 			),
 		)
 	}
-	"map" => {
-		var $world = populate(count).0
-		var $pass = 0
-		while $pass < passes {
-			$world = $world.map_with(|Pos.(p), Vel.(v)| Pos.({ x: p.x + v.dx, y: p.y + v.dy }))
-			$pass = $pass + 1
-		}
-		Ok($world.len())
-	}
+	# Every map checks its result, so the work cannot be optimized away.
+	# Entity n starts at x = n, moving by n each pass.
+	"map" => Ok(moved(count, |world| world.map_with(|Pos.(p), Vel.(v)| Pos.({ x: p.x + v.dx, y: p.y + v.dy }))))
+	# The same through a selection that keeps every archetype. Selecting
+	# `without(Tag.to_col)` here crashes (COMPILER_WORKAROUNDS.md, 6).
+	"map_in" => Ok(moved(count, |world| world.map_with_in(world.select().having(Pos.to_col), |Pos.(p), Vel.(v)| Pos.({ x: p.x + v.dx, y: p.y + v.dy }))))
+	"map1" => Ok(moved(count, |world| world.map1(|Pos.(p)| Pos.({ x: p.x + p.y, y: p.y }))))
+	"map2" => Ok(moved(count, |world| world.map2(|Pos.(p), Vel.(v)| (Pos.({ x: p.x + v.dx, y: p.y }), v))))
 	_ => Err(UnknownOp)
 }
 
@@ -138,7 +153,7 @@ main! = |args| match args {
 		Ok({})
 	}
 	_ => {
-		echo!("usage: ops <spawn|despawn|churn|replace|insert|take|get|map> <entities>")
+		echo!("usage: ops <spawn|despawn|churn|replace|insert|take|get|map|map_in|map1|map2> <entities>")
 		Err(Exit(2))
 	}
 }
@@ -151,4 +166,7 @@ expect run("insert", 50) == Ok(50)
 expect run("take", 50) == Ok(50)
 expect run("get", 50) == Ok(50)
 expect run("map", 50) == Ok(50)
+expect run("map_in", 50) == Ok(50)
+expect run("map1", 50) == Ok(50)
+expect run("map2", 50) == Ok(50)
 expect run("nonsense", 50) == Err(UnknownOp)

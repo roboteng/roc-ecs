@@ -78,7 +78,36 @@ On `nightly-2026-10-06-c34079d`, at the largest size each side finished within t
 | `insert`, adding | 1.75 | 86,201ns | 0.94 | 1,731ns |
 | `insert` then `take` | 1.87 | 88,513ns | 0.93 | 3,064ns |
 
-`get` and the `map` functions were already linear and still are. A `map` still allocates a new list for each column it writes: a `Selection` shares its archetypes with the `World` it came from, so there is never only one reference to them. Making that in place would need a change to the `Selection` API.
+`get` and the `map` functions were already linear. The maps also did more work per entity than they had to, because they could never write in place:
+
+- A `Selection` used to carry the changed archetypes back to the world (`selection.map_with(fn).apply_to(world)`), so the selection and the world shared them.
+- `List.map2` allocates every time, and does not hand over its elements unshared.
+
+Now the maps belong to the world. `world.map_with_in(selection, fn)` uses only the selection's mask, and `world.map_with(fn)` is the same thing with every archetype selected. Before writing, a map looks up the columns it needs without changing anything (`plan1`, `plan_with` and the rest). Then it takes the archetype out of the list (`change_selected`), takes the list out of its column (`map_column`), maps it, and puts both back.
+
+Per entity, for each pass over the world:
+
+| Map | Entities | Before | After |
+| --- | --- | --- | --- |
+| `map_with` | 1,000,000 | 14.2ns | 4.9ns |
+| `map_with` | 64,000 | 9.2ns | 0.8ns |
+| `map_with_in` | 1,000,000 | 13.9ns | 4.5ns |
+| `map1` | 1,000,000 | 3.9ns | 1.3ns |
+| `map2` | 1,000,000 | 38.5ns | 35.3ns |
+
+Only `map1` writes truly in place. It uses `List.map`, which reuses a list nothing else holds: forcing a second reference to the list takes it back to 3.9ns.
+
+`map_with` and `map_with2` use `List.map_with_index`, reading the other columns by row. That still makes a new list: it runs just as fast with a second reference. Loops that really do update in place were measured too, and were slower:
+
+| `map_with` element step, 1,000,000 entities | Time | With a forced second reference |
+| --- | --- | --- |
+| `List.update` per row | 8.8ns | 14.4ns |
+| `List.get` then `List.set` per row | 10.7ns | 16.2ns |
+| `List.map_with_index` | 4.8ns | 4.8ns |
+
+So bounds checks and a closure call per row cost more than one allocation per column. Something like a `List.map2` that reuses its first list would make these in place too.
+
+`map2` and `map3` write more than one component. They still build a list of tuples with `List.map2` and split it into new columns.
 
 What the compiler turned out to need, each found by changing one thing and running the benchmark again. These are facts about that compiler version, not about Roc, so re-measure before relying on them:
 

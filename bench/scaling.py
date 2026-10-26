@@ -27,7 +27,7 @@ from pathlib import Path
 
 BENCH = Path(__file__).resolve().parent
 WORKLOAD = BENCH / "ops.roc"
-OPS = ["spawn", "despawn", "churn", "replace", "insert", "take", "get", "map"]
+OPS = ["spawn", "despawn", "churn", "replace", "insert", "take", "get", "map", "map_in", "map1", "map2"]
 
 
 def build(scratch, opt):

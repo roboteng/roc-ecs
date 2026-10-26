@@ -138,5 +138,14 @@ take = |World.(world), entity| {
 **Workaround.** `take` builds a `Column` from the component it took and uses
 its `matches` closure, which was made where the type was known.
 
+It also happens outside `Ecs.roc`. In `bench/ops.roc`, a map through
+`world.select().without(Tag.to_col)` in a closure handed to the `moved` helper
+crashes the same way, both with `world.map_with_in(selection, fn)` and with
+the `selection.map_with(fn).apply_to(world)` API that came before it. With
+`having(Pos.to_col)` in its place, or with no filter, it runs. A smaller app
+that hands the same call to a one-line `apply = |world, f| f(world)` does not
+crash, so what triggers it is not yet pinned down.
+
 **Recheck.** Put the `C.from_col` version back and run
-`roc test package/main.roc`.
+`roc test package/main.roc`. For the second case, put `without(Tag.to_col)`
+back in the `map_in` workload and run `roc test bench/ops.roc`.
