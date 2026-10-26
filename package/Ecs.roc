@@ -1116,9 +1116,9 @@ expect {
 	(world4, fourth) = world3.spawn(Ecs.Bundle.empty().add(pos(4, 4)))
 	world2.despawned == [first, second] and world2.len() == 0 and world2.despawn(first).is_err()
 		and third.id == second.id and third.gen == second.gen + 1
-			and fourth.id == first.id and fourth.gen == first.gen + 1
-				and world4.despawned == [] and positions(world4) == [(3, 3), (4, 4)]
-					and !world4.is_alive(first) and !world4.is_alive(second)
+		and fourth.id == first.id and fourth.gen == first.gen + 1
+		and world4.despawned == [] and positions(world4) == [(3, 3), (4, 4)]
+		and !world4.is_alive(first) and !world4.is_alive(second)
 }
 
 expect {

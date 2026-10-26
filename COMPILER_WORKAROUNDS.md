@@ -49,14 +49,16 @@ cannot write `|Position.(p)|` for a `RayEcs` component.
 run `roc check examples/ray-basics.roc`. If it passes, the `get` functions and
 the `_position` style arguments can be replaced with patterns.
 
+**Status.** The recheck passes on `nightly-2026-10-21-5349569`, so this
+workaround can go.
+
 ## 2. A component with neither method annotated hangs the compiler
 
-**Status.** This affects the compiler that roc-ray 0.10.0 pins
-(`nightly-2026-09-27-a3ce7f1`), so the examples that run on RocRay keep the
-workaround. It is fixed in the compiler we currently build with: on
-`nightly-2026-10-06-c34079d` the recheck below finishes in about 3s with no
-errors and the tests pass, and `examples/sample.roc`, which has no platform,
-already leaves both methods unannotated.
+**Status.** Fixed. This affected the compiler that roc-ray 0.10.0 pinned
+(`nightly-2026-09-27-a3ce7f1`). roc-ray 0.11 pins no compiler, and on
+`nightly-2026-10-21-5349569` the recheck below finishes in under a second
+with no errors, so the annotations can go. `examples/sample.roc`, which has
+no platform, already leaves both methods unannotated.
 
 **What fails.** A component's `to_col` and `from_col` can each be inferred, but
 not both at once. With `Follower` in `ray-basics.roc` as the test case:
@@ -149,3 +151,29 @@ crash, so what triggers it is not yet pinned down.
 **Recheck.** Put the `C.from_col` version back and run
 `roc test package/main.roc`. For the second case, put `without(Tag.to_col)`
 back in the `map_in` workload and run `roc test bench/ops.roc`.
+
+## 5. A parameter of unknown type has one signature per method
+
+**What fails.** When a function's parameter has no annotation, every method
+called on it must have the same type everywhere in that function, including
+inside the helpers it is passed to. `World.get` and `World.resource` return
+whichever type the caller expects, so two calls that want different types
+conflict. This was observed on `nightly-2026-10-21-5349569`; older compilers
+accepted it:
+
+```roc
+layer_of = |world, entity| match world.get(entity) { Ok(Layer.(l)) => l, Err(_) => 0 }
+labels = |world| world.query3().map(
+    |(entity, ...)| (layer_of(world, entity), match world.get(entity) { Ok(TextAlign.(a)) => ... }),
+)
+# requires its type to have two different, incompatible get methods
+```
+
+**Workaround.** In helpers that call one of these methods, use the qualified
+name, `Ecs.World.get(world, entity)` or `Ecs.World.resource(world)`. That fixes
+`world` to an `Ecs.World` and the method stays polymorphic. `RayEcs.layer_of`,
+`RayEcs.border_width` and `RayEcs.labels` do this, as do `seconds`, `held` and
+`pressed` in `asteroids.roc`.
+
+**Recheck.** Change `Ecs.World.get(world, entity)` in `RayEcs.layer_of` back
+to `world.get(entity)` and run `roc check examples/RayEcs.roc`.

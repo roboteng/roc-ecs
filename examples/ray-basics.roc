@@ -1,6 +1,6 @@
 app [Model, program] {
 	ecs: "../package/main.roc",
-	rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst",
+	rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.11.1/4NWnSt7bKCyVx4xDFH89pV11ekYbiGQ43kdjfZ9NBJQn.tar.zst",
 }
 
 import rr.App
@@ -68,18 +68,18 @@ scene = |font| {
 	title_width = font.measure({ text: title, size: 38, spacing: Draw.default_spacing }).width
 	Ecs.World.empty({ ray: RayEcs.resources })
 		.spawn3(at(0, 0), Size.({ width: 800, height: 600 }), Gradient.(TopToBottom(Color.from_hex_rgb(0x131f38), Color.from_hex_rgb(0x070b16))))
-	# Two glows on the backdrop; the accent one breathes.
+		# Two glows on the backdrop; the accent one breathes.
 		.spawn(Ecs.Bundle.empty().add(Layer.(1)).add(at(620, 90)).add(Radius.(220)).add(fading(blue, 90)).add(Accent.(90)).add(Pulse.({ base: 220, amount: 40 }))).0
 		.spawn4(Layer.(1), at(150, 540), Radius.(260), fading(green, 45))
 		.spawn4(Layer.(2), at(0, 0), FpsCounter.(32), TextColor.(Color.white))
-	# A soft drop shadow, then the panel itself over the top of it.
+		# A soft drop shadow, then the panel itself over the top of it.
 		.spawn(Ecs.Bundle.empty().add(Layer.(3)).add(at(126, 160)).add(Size.({ width: 560, height: 300 })).add(CornerRadius.(22)).add(FillColor.(Color.with_alpha(Color.black, 90))).add(BorderColor.(Color.transparent))).0
 		.spawn(Ecs.Bundle.empty().add(Layer.(4)).add(at(120, 150)).add(Size.({ width: 560, height: 300 })).add(CornerRadius.(22)).add(FillColor.(Color.from_hex_rgb(0x18243b))).add(BorderColor.(Color.with_alpha(Color.white, 55))).add(BorderWidth.(2))).0
-	# The title, a rule under it as wide as the title, and the help line.
+		# The title, a rule under it as wide as the title, and the help line.
 		.spawn(Ecs.Bundle.empty().add(Layer.(5)).add(at(400, 230)).add(Label.({ text: title, size: 38, font: font })).add(TextColor.(Color.white)).add(TextAlign.((Top, Center)))).0
 		.spawn(Ecs.Bundle.empty().add(Layer.(5)).add(at(400 - title_width * 0.5, 286.5)).add(Size.({ width: title_width, height: 3 })).add(FillColor.(Color.with_alpha(blue, 170))).add(BorderColor.(Color.transparent)).add(Accent.(170))).0
 		.spawn(Ecs.Bundle.empty().add(Layer.(5)).add(at(400, 310)).add(Label.({ text: "Move the pointer  -  click for an accent  -  ESC exits", size: 18, font: font })).add(TextColor.(Color.from_hex_rgb(0xa8b4cc))).add(TextAlign.((Top, Center)))).0
-	# The pointer: a halo that breathes, a dot, and a faint ring over both.
+		# The pointer: a halo that breathes, a dot, and a faint ring over both.
 		.spawn(Ecs.Bundle.empty().add(Layer.(6)).add(at(400, 300)).add(Radius.(26)).add(FillColor.(Color.with_alpha(blue, 40))).add(Accent.(40)).add(Pulse.({ base: 26, amount: 8 })).add(Follower.({}))).0
 		.spawn(Ecs.Bundle.empty().add(Layer.(6)).add(at(400, 300)).add(Radius.(18)).add(FillColor.(blue)).add(BorderColor.(Color.white)).add(BorderWidth.(3)).add(Accent.(255)).add(Follower.({}))).0
 		.spawn(Ecs.Bundle.empty().add(Layer.(7)).add(at(400, 300)).add(Radius.(32)).add(FillColor.(Color.with_alpha(Color.from_hex_rgb(0x00ff00), 40))).add(Pulse.({ base: 32, amount: 8 })).add(Follower.({}))).0
@@ -91,7 +91,7 @@ scene = |font| {
 quit_on_escape = |world, _input| {
 	keyboard : Keyboard
 	keyboard = world.inner.resource()
-	if keyboard.pressed(KeyEscape) Err(Exit(0)) else Ok(world)
+	if (keyboard.pressed(KeyEscape)) Err(Exit(0)) else Ok(world)
 }
 
 ## Keeps every `Follower` under the pointer.
@@ -105,7 +105,7 @@ follow_pointer = |world| {
 tint_accents = |world| {
 	pointer : Pointer
 	pointer = world.resource()
-	accent = if pointer.down(Left) red else blue
+	accent = if (pointer.down(Left)) red else blue
 	world
 		.map_with(|_fill, Accent.(alpha)| FillColor.(Color.with_alpha(accent, alpha)))
 		.map_with(|_gradient, Accent.(alpha)| fading(accent, alpha))
