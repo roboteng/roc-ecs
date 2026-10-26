@@ -2,7 +2,7 @@ package
 	[]
 	{
 		ecs: "../package/main.roc",
-		rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst",
+		rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.11.1/4NWnSt7bKCyVx4xDFH89pV11ekYbiGQ43kdjfZ9NBJQn.tar.zst",
 	}
 
 import rr.App
@@ -212,10 +212,10 @@ RayEcs :: [].{
 			.concat(RayEcs.circles(world))
 			.concat(RayEcs.labels(world))
 			.concat(RayEcs.fps_counters(world))
-		layers = commands.fold([], |seen, (layer, _)| if seen.contains(layer) seen else seen.append(layer)).sort_by(|layer| layer)
+		layers = commands.fold([], |seen, (layer, _)| if (seen.contains(layer)) seen else seen.append(layer)).sort_by(|layer| layer)
 		layers.fold(
 			[],
-			|drawn, layer| commands.fold(drawn, |acc, (at, command)| if at == layer acc.append(command) else acc),
+			|drawn, layer| commands.fold(drawn, |acc, (at, command)| if (at == layer) acc.append(command) else acc),
 		)
 	}
 
@@ -294,7 +294,7 @@ RayEcs :: [].{
 				size: label.size,
 				font: label.font,
 				color: color,
-				align: match world.get(entity) {
+				align: match Ecs.World.get(world, entity) {
 					Ok(TextAlign.(align)) => align
 					Err(_) => (Top, Left)
 				},
@@ -309,12 +309,12 @@ RayEcs :: [].{
 		),
 	)
 
-	layer_of = |world, entity| match world.get(entity) {
+	layer_of = |world, entity| match Ecs.World.get(world, entity) {
 		Ok(Layer.(layer)) => layer
 		Err(_) => 0
 	}
 
-	border_width = |world, entity| match world.get(entity) {
+	border_width = |world, entity| match Ecs.World.get(world, entity) {
 		Ok(BorderWidth.(width)) => width
 		Err(_) => 1
 	}
@@ -692,6 +692,6 @@ expect {
 	RayEcs.Clock.(clock) = world.resource()
 	pointer.position() == { x: 30, y: 40 }
 		and pointer.pressed(Left) and !pointer.down(Right)
-			and keyboard.down(KeySpace) and !keyboard.down(KeyEnter)
-				and clock.dt == 0.5 and clock.total == 1
+		and keyboard.down(KeySpace) and !keyboard.down(KeyEnter)
+		and clock.dt == 0.5 and clock.total == 1
 }
